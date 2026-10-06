@@ -7,7 +7,7 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::keys::{BINDINGS, key_name};
 use crate::app::queue::{Queue, Repeat};
-use crate::app::state::{AppState, Focus, Items, ListKind, SECTIONS, View};
+use crate::app::state::{AppState, Focus, Items, ListKind, SECTIONS, SearchItem, View};
 
 const SIDEBAR_WIDTH: u16 = 19;
 
@@ -83,7 +83,10 @@ fn breadcrumb(stack: &[View]) -> String {
 
 fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
     let title_width = (area.width as usize).saturating_sub(16);
-    let crumb = truncate_left(&breadcrumb(&s.stack), title_width);
+    let crumb = match &s.search_input {
+        Some(q) => truncate_left(&format!("Search: {q}▏"), title_width),
+        None => truncate_left(&breadcrumb(&s.stack), title_width),
+    };
     let focused = s.focus == Focus::List;
     let Some(v) = s.stack.last_mut() else { return };
     let is_queue = matches!(v.kind, ListKind::Queue);
@@ -114,7 +117,10 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
             "loading…"
         } else {
             match v.kind {
-                ListKind::Search => "search arrives in a later milestone",
+                ListKind::Search if s.search_input.is_some() => {
+                    "type a query, Enter to search, Esc to cancel"
+                }
+                ListKind::Search => "press / to search",
                 ListKind::Queue => "queue is empty",
                 _ => "nothing here",
             }
@@ -136,6 +142,12 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
             } else {
                 row(v, i)
             };
+            if let Items::Search(items) = &v.items
+                && let SearchItem::Header(h) = &items[i]
+            {
+                return Line::raw(fit(h, "", width))
+                    .style(Style::new().add_modifier(Modifier::BOLD));
+            }
             let marker = if i == v.selected { "> " } else { "  " };
             let line = Line::raw(fit(&format!("{marker}{left}"), &right, width));
             if i == v.selected {
@@ -174,6 +186,18 @@ fn row(v: &View, i: usize) -> (String, String) {
             };
             (left, t.duration_ms.map_or(String::new(), crate::fmt_ms))
         }
+        Items::Search(items) => match &items[i] {
+            SearchItem::Header(_) => (String::new(), String::new()),
+            SearchItem::Artist(a) => (a.title.clone(), String::new()),
+            SearchItem::Album(a) => {
+                let year = a.year.map_or(String::new(), |y| y.to_string());
+                (format!("{} — {}", a.title, a.parent_title), year)
+            }
+            SearchItem::Track(t) => (
+                format!("{} — {} · {}", t.title, t.grandparent_title, t.parent_title),
+                t.duration_ms.map_or(String::new(), crate::fmt_ms),
+            ),
+        },
         Items::Playlists(p) => {
             let p = &p[i];
             let count = p.leaf_count.map(|n| format!("{n} tracks"));

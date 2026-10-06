@@ -13,15 +13,18 @@ use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use crate::audio::player::{self, PlayerCmd, PlayerEvent};
 use crate::config::{self, Config};
 use crate::plex::PlexClient;
+use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Page, Playlist, Track};
 use state::{AppState, ListKind};
 
 const API_WORKERS: usize = 2;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum AddMode {
     Append,
     Next,
+    /// replace the queue with the fetched tracks and start at this rating key
+    PlayFrom(String),
 }
 
 pub enum TrackSource {
@@ -39,6 +42,9 @@ pub enum ApiRequest {
     Tracks {
         source: TrackSource,
         mode: AddMode,
+    },
+    Search {
+        query: String,
     },
 }
 
@@ -59,6 +65,10 @@ pub enum AppEvent {
     Tracks {
         mode: AddMode,
         result: Result<Vec<Track>, String>,
+    },
+    Search {
+        query: String,
+        result: Result<SearchResults, String>,
     },
     Player(PlayerEvent),
 }
@@ -115,7 +125,9 @@ fn event_loop(
 fn handle(state: &mut AppState, ev: AppEvent) {
     match ev {
         AppEvent::Input(Event::Key(k)) if k.kind == KeyEventKind::Press => {
-            if let Some(action) = keys::lookup(k) {
+            if state.search_input.is_some() {
+                state.on_search_key(k);
+            } else if let Some(action) = keys::lookup(k) {
                 state.on_action(action);
             }
         }
@@ -130,6 +142,7 @@ fn handle(state: &mut AppState, ev: AppEvent) {
             Ok(tracks) => state.add_tracks(mode, tracks),
             Err(e) => state.error(e),
         },
+        AppEvent::Search { query, result } => state.on_search(query, result),
         AppEvent::Player(ev) => state.on_player(ev),
     }
 }
@@ -182,6 +195,12 @@ fn spawn_api_workers(
                             start,
                             result: fetch_page(&client, &section, &kind, start)
                                 .map_err(|e| format!("{e:#}")),
+                        },
+                        ApiRequest::Search { query } => AppEvent::Search {
+                            result: client
+                                .search(&section, &query)
+                                .map_err(|e| format!("{e:#}")),
+                            query,
                         },
                         ApiRequest::Tracks { source, mode } => AppEvent::Tracks {
                             mode,

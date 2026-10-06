@@ -1,4 +1,3 @@
-#[expect(dead_code, reason = "search results are consumed by the TUI in M6")]
 pub mod api;
 pub mod auth;
 pub mod client;

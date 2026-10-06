@@ -1,10 +1,13 @@
 use std::sync::mpsc::SyncSender;
+
+use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use std::time::{Duration, Instant};
 
 use super::keys::Action;
 use super::queue::Queue;
 use super::{AddMode, ApiRequest, PageData, TrackSource};
 use crate::audio::player::PlayerCmd;
+use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Playlist, Track};
 
 const PREFETCH_MARGIN: usize = 50;
@@ -29,6 +32,14 @@ pub enum Items {
     Albums(Vec<Album>),
     Tracks(Vec<Track>),
     Playlists(Vec<Playlist>),
+    Search(Vec<SearchItem>),
+}
+
+pub enum SearchItem {
+    Header(String),
+    Artist(Artist),
+    Album(Album),
+    Track(Track),
 }
 
 impl Items {
@@ -38,6 +49,7 @@ impl Items {
             Items::Albums(v) => v.len(),
             Items::Tracks(v) => v.len(),
             Items::Playlists(v) => v.len(),
+            Items::Search(v) => v.len(),
         }
     }
 }
@@ -103,6 +115,8 @@ pub struct AppState {
     pub debug_line: bool,
     pub message: Option<Message>,
     pub list_height: usize,
+    /// text being typed after `/`, `Some` while the search prompt is open
+    pub search_input: Option<String>,
     pub quit: bool,
 }
 
@@ -128,6 +142,7 @@ impl AppState {
             debug_line: false,
             message: None,
             list_height: 10,
+            search_input: None,
             quit: false,
         };
         s.set_section(0);
@@ -187,10 +202,10 @@ impl AppState {
             ListKind::Artists => Items::Artists(Vec::new()),
             ListKind::Albums | ListKind::ArtistAlbums(_) => Items::Albums(Vec::new()),
             ListKind::Playlists => Items::Playlists(Vec::new()),
-            ListKind::AlbumTracks(_)
-            | ListKind::PlaylistTracks(_)
-            | ListKind::Search
-            | ListKind::Queue => Items::Tracks(Vec::new()),
+            ListKind::AlbumTracks(_) | ListKind::PlaylistTracks(_) | ListKind::Queue => {
+                Items::Tracks(Vec::new())
+            }
+            ListKind::Search => Items::Search(Vec::new()),
         };
         View {
             id: self.next_id,
@@ -325,6 +340,7 @@ impl AppState {
             Action::MoveDown => self.queue_edit(|s, i| s.move_at(i, true)),
             Action::MoveUp => self.queue_edit(|s, i| s.move_at(i, false)),
             Action::Clear => self.queue_edit(|s, _| s.clear_queue()),
+            Action::Search => self.open_search(),
             Action::Help => self.help = true,
             Action::DebugLine => self.debug_line = !self.debug_line,
             Action::Quit => self.request_quit(),
@@ -346,6 +362,9 @@ impl AppState {
                 let last = self.list_len().saturating_sub(1);
                 let Some(v) = self.view_mut() else { return };
                 v.selected = v.selected.saturating_add_signed(delta).min(last);
+                if let Items::Search(items) = &v.items {
+                    v.selected = skip_headers(items, v.selected, delta >= 0);
+                }
                 self.ensure_loaded();
             }
         }
@@ -382,6 +401,18 @@ impl AppState {
                     p.title.clone(),
                 )
             }),
+            Items::Search(items) => match items.get(i) {
+                Some(SearchItem::Artist(a)) => Some((
+                    ListKind::ArtistAlbums(a.rating_key.clone()),
+                    a.title.clone(),
+                )),
+                Some(SearchItem::Album(a)) => Some((
+                    ListKind::AlbumTracks(a.rating_key.clone()),
+                    format!("{} — {}", a.title, a.parent_title),
+                )),
+                Some(SearchItem::Track(t)) => return self.play_from_album(t.clone()),
+                _ => None,
+            },
             Items::Tracks(t) if i < t.len() => {
                 let tracks = t.clone();
                 self.queue.replace(tracks, i);
@@ -409,6 +440,12 @@ impl AppState {
             Items::Playlists(p) => p
                 .get(i)
                 .map(|p| TrackSource::Playlist(p.rating_key.clone())),
+            Items::Search(items) => match items.get(i) {
+                Some(SearchItem::Track(t)) => return self.add_tracks(mode, vec![t.clone()]),
+                Some(SearchItem::Album(a)) => Some(TrackSource::Album(a.rating_key.clone())),
+                Some(SearchItem::Artist(a)) => Some(TrackSource::Artist(a.rating_key.clone())),
+                _ => None,
+            },
         };
         if let Some(source) = source
             && self
@@ -420,20 +457,41 @@ impl AppState {
         }
     }
 
+    /// Enter on a search result track: queue its whole album and start at the track
+    fn play_from_album(&mut self, track: Track) {
+        let start = track.rating_key.clone();
+        if track.parent_rating_key.is_empty() {
+            return self.add_tracks(AddMode::PlayFrom(start), vec![track]);
+        }
+        let req = ApiRequest::Tracks {
+            source: TrackSource::Album(track.parent_rating_key),
+            mode: AddMode::PlayFrom(start),
+        };
+        if self.api.try_send(req).is_err() {
+            self.error("busy, try again".into());
+        }
+    }
+
     pub fn add_tracks(&mut self, mode: AddMode, tracks: Vec<Track>) {
         let n = tracks.len();
         match mode {
             AddMode::Append => self.queue.append(tracks),
             AddMode::Next => self.queue.play_next(tracks),
+            AddMode::PlayFrom(rk) => {
+                let start = tracks.iter().position(|t| t.rating_key == rk).unwrap_or(0);
+                self.queue.replace(tracks, start);
+                return self.play_index(self.queue.current.unwrap_or(0));
+            }
         }
         let what = if n == 1 {
             "track".to_owned()
         } else {
             format!("{n} tracks")
         };
-        let verb = match mode {
-            AddMode::Append => "added",
-            AddMode::Next => "playing next:",
+        let verb = if matches!(mode, AddMode::Next) {
+            "playing next:"
+        } else {
+            "added"
         };
         self.info(format!("{verb} {what}"));
         self.sync_next();
@@ -445,5 +503,107 @@ impl AppState {
         } else {
             self.focus = Focus::Sidebar;
         }
+    }
+}
+
+/// moves `i` off a group header, preferring the direction of travel
+fn skip_headers(items: &[SearchItem], i: usize, forward: bool) -> usize {
+    let is_item =
+        |j: &usize| matches!(items.get(*j), Some(it) if !matches!(it, SearchItem::Header(_)));
+    let ahead = (i..items.len()).find(is_item);
+    let behind = (0..=i.min(items.len().saturating_sub(1)))
+        .rev()
+        .find(is_item);
+    let pick = if forward {
+        ahead.or(behind)
+    } else {
+        behind.or(ahead)
+    };
+    pick.unwrap_or(i)
+}
+
+impl AppState {
+    fn open_search(&mut self) {
+        if !matches!(self.stack.first().map(|v| &v.kind), Some(ListKind::Search)) {
+            self.set_section(3);
+        }
+        self.stack.truncate(1);
+        self.section = 3;
+        self.focus = Focus::List;
+        self.search_input = Some(String::new());
+    }
+
+    /// keys typed while the search prompt is open
+    pub fn on_search_key(&mut self, k: KeyEvent) {
+        let Some(input) = self.search_input.as_mut() else {
+            return;
+        };
+        match k.code {
+            KeyCode::Esc => self.search_input = None,
+            KeyCode::Enter => {
+                let query = input.trim().to_owned();
+                self.search_input = None;
+                if query.is_empty() {
+                    return;
+                }
+                if let Some(v) = self.stack.first_mut() {
+                    v.title = format!("Search: {query}");
+                    v.loading = true;
+                }
+                if self.api.try_send(ApiRequest::Search { query }).is_err() {
+                    self.error("busy, try again".into());
+                }
+            }
+            KeyCode::Backspace => {
+                input.pop();
+            }
+            KeyCode::Char('u') if k.modifiers.contains(KeyModifiers::CONTROL) => input.clear(),
+            KeyCode::Char(c) if !k.modifiers.contains(KeyModifiers::CONTROL) => input.push(c),
+            _ => {}
+        }
+    }
+
+    pub fn on_search(&mut self, query: String, result: Result<SearchResults, String>) {
+        let Some(v) = self
+            .stack
+            .iter_mut()
+            .find(|v| matches!(v.kind, ListKind::Search))
+        else {
+            return;
+        };
+        // a newer search was submitted while this one was in flight
+        if v.title != format!("Search: {query}") {
+            return;
+        }
+        v.loading = false;
+        let r = match result {
+            Ok(r) => r,
+            Err(e) => return self.error(e),
+        };
+        let groups: [(&str, Vec<SearchItem>); 3] = [
+            (
+                "Artists",
+                r.artists.into_iter().map(SearchItem::Artist).collect(),
+            ),
+            (
+                "Albums",
+                r.albums.into_iter().map(SearchItem::Album).collect(),
+            ),
+            (
+                "Tracks",
+                r.tracks.into_iter().map(SearchItem::Track).collect(),
+            ),
+        ];
+        let mut items = Vec::new();
+        for (name, group) in groups {
+            if !group.is_empty() {
+                items.push(SearchItem::Header(format!("{name} ({})", group.len())));
+                items.extend(group);
+            }
+        }
+        v.total = Some(items.len() as u32);
+        v.selected = skip_headers(&items, 0, true);
+        v.offset = 0;
+        v.items = Items::Search(items);
     }
 }
