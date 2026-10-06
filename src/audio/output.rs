@@ -17,7 +17,7 @@ struct Shared {
     flush: AtomicBool,
 }
 
-/// The device stream plus the producer 
+/// The device stream plus the producer
 /// side of its ~0.5 s stereo ring buffer
 pub struct Output {
     stream: Stream,

@@ -50,8 +50,9 @@ enum Subcommand {
         query: Vec<String>,
     },
 
-    /// Play tracks gaplessly without the TUI. Reads commands from stdin:
-    /// p (pause/resume), s <secs> (seek), . and , (±10s), + and - (volume), n (next), q (quit)
+    /// Play tracks gaplessly without the TUI
+    ///
+    /// Reads commands from stdin: p (pause/resume), s <secs> (seek), . and , (±10s), + and - (volume), n (next), q (quit)
     Play {
         /// Track rating keys, played in order
         #[arg(required = true)]
@@ -126,7 +127,7 @@ fn play(client: crate::plex::PlexClient, volume: f32, keys: &[String]) -> Result
         match events.recv_timeout(Duration::from_millis(50)) {
             Ok(PlayerEvent::Position(ms)) => {
                 pos = ms;
-                eprint!("\r{}  rss {} kB   ", fmt_ms(ms), rss_kb());
+                eprint!("\r{}  rss {} kB   ", crate::fmt_ms(ms), crate::rss_kb());
             }
             Ok(PlayerEvent::TrackStarted(t)) => {
                 current = tracks
@@ -187,21 +188,6 @@ fn play(client: crate::plex::PlexClient, volume: f32, keys: &[String]) -> Result
             cmd.send(c)?;
         }
     }
-    eprintln!("rss {} kB", rss_kb());
+    eprintln!("rss {} kB", crate::rss_kb());
     Ok(())
-}
-
-fn fmt_ms(ms: u64) -> String {
-    format!("{}:{:02}", ms / 60_000, ms / 1000 % 60)
-}
-
-fn rss_kb() -> u64 {
-    std::fs::read_to_string("/proc/self/status")
-        .ok()
-        .and_then(|s| {
-            s.lines()
-                .find_map(|l| l.strip_prefix("VmRSS:"))
-                .and_then(|v| v.trim().trim_end_matches(" kB").parse().ok())
-        })
-        .unwrap_or(0)
 }

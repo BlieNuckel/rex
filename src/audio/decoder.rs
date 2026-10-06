@@ -64,7 +64,7 @@ impl Decoder {
         self.rate
     }
 
-    /// Decodes the next packet and appends it to `out` as interleaved stereo.
+    /// Decodes the next packet and appends it to `out` as interleaved stereo
     /// Returns `Ok(false)` at end of a stream
     pub fn next(&mut self, out: &mut Vec<f32>) -> Result<bool> {
         loop {

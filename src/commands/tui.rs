@@ -1,12 +1,11 @@
 use std::process::ExitCode;
+use std::sync::Arc;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser;
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind};
-use ratatui::widgets::{Block, Paragraph};
 
 use crate::config::Config;
-use crate::plex::{PlexClient, auth};
+use crate::plex::auth;
 
 #[derive(Parser, Debug, Default)]
 pub(super) struct Options {}
@@ -19,31 +18,11 @@ impl Options {
         }
         println!("Connecting…");
         let client = auth::connect(cfg)?;
-        run_tui(&client)?;
+        let section = cfg
+            .music_section
+            .clone()
+            .context("no music section selected")?;
+        crate::app::run(Arc::new(client), section)?;
         Ok(ExitCode::SUCCESS)
     }
-}
-
-fn run_tui(client: &PlexClient) -> Result<()> {
-    // ratatui::init installs a panic hook that restores the terminal
-    let mut terminal = ratatui::init();
-    let result = (|| -> Result<()> {
-        loop {
-            terminal.draw(|f| {
-                f.render_widget(
-                    Paragraph::new(format!("{}\n\nq to quit", client.base))
-                        .block(Block::bordered().title(" rex ")),
-                    f.area(),
-                )
-            })?;
-            if let Event::Key(k) = event::read()?
-                && k.kind == KeyEventKind::Press
-                && k.code == KeyCode::Char('q')
-            {
-                return Ok(());
-            }
-        }
-    })();
-    ratatui::restore();
-    result
 }
