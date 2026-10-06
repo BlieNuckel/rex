@@ -1,0 +1,256 @@
+use std::io::Write;
+use std::thread;
+use std::time::{Duration, Instant};
+
+use anyhow::{Context, Result, bail};
+use serde::Deserialize;
+use tracing::{info, warn};
+
+use super::PlexClient;
+use super::models::{Container, Directories, Section};
+use crate::config::Config;
+
+const PLEX_TV: &str = "https://plex.tv";
+const API_TIMEOUT: Duration = Duration::from_secs(15);
+const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Pin {
+    id: u64,
+    code: String,
+    #[serde(default)]
+    auth_token: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Resource {
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    provides: String,
+    #[serde(default)]
+    client_identifier: String,
+    #[serde(default)]
+    access_token: Option<String>,
+    #[serde(default)]
+    connections: Vec<Connection>,
+}
+
+#[derive(Deserialize)]
+struct Connection {
+    uri: String,
+    #[serde(default)]
+    local: bool,
+    #[serde(default)]
+    relay: bool,
+}
+
+impl Connection {
+    fn rank(&self) -> u8 {
+        match (self.relay, self.local) {
+            (false, true) => 0,
+            (false, false) => 1,
+            (true, _) => 2,
+        }
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct Identity {
+    #[serde(default)]
+    machine_identifier: String,
+}
+
+// Returns the plex account token
+pub fn login(cfg: &Config) -> Result<String> {
+    let tv = PlexClient::new(PLEX_TV, "", &cfg.client_identifier, API_TIMEOUT);
+    let pin: Pin = tv.post("/api/v2/pins", &[("strong", "true")])?;
+    println!(
+        "Open this URL in a browser to sign in:\n\n  https://app.plex.tv/auth#?clientID={}&code={}&context%5Bdevice%5D%5Bproduct%5D=rex\n\nWaiting…",
+        cfg.client_identifier, pin.code
+    );
+    let deadline = Instant::now() + Duration::from_secs(300);
+    let path = format!("/api/v2/pins/{}", pin.id);
+    while Instant::now() < deadline {
+        thread::sleep(Duration::from_secs(2));
+        match tv.get::<Pin>(&path, &[("code", &pin.code)]) {
+            Ok(p) => {
+                if let Some(token) = p.auth_token.filter(|t| !t.is_empty()) {
+                    return Ok(token);
+                }
+            }
+            Err(e) => warn!("polling pin: {e:#}"),
+        }
+    }
+    bail!("timed out waiting for sign-in")
+}
+
+/// Connects to saved server and only runs discovery again
+/// if plex.tv is reachable
+pub fn connect(cfg: &mut Config) -> Result<PlexClient> {
+    if let Some(url) = cfg.server_url.clone() {
+        let token = cfg
+            .server_token
+            .clone()
+            .or_else(|| cfg.token.clone())
+            .context("server_url is set but no token; run `rex login`")?;
+        if probe(&url, cfg.server_id.as_deref()) {
+            let client = PlexClient::new(&url, &token, &cfg.client_identifier, API_TIMEOUT);
+            ensure_section(&client, cfg)?;
+            return Ok(client);
+        }
+        warn!("saved server {url} unreachable, rediscovering");
+    }
+    let account = cfg
+        .token
+        .clone()
+        .context("not logged in; run `rex login`")?;
+    let client = discover(cfg, &account)?;
+    ensure_section(&client, cfg)?;
+    Ok(client)
+}
+
+fn probe(uri: &str, expected_id: Option<&str>) -> bool {
+    let c = PlexClient::new(uri, "", "rex-probe", PROBE_TIMEOUT);
+    match c.get::<Container<Identity>>("/identity", &[]) {
+        Ok(id) => expected_id.is_none_or(|e| e == id.mc.machine_identifier),
+        Err(e) => {
+            info!("probe failed: {e:#}");
+            false
+        }
+    }
+}
+
+fn discover(cfg: &mut Config, account: &str) -> Result<PlexClient> {
+    let tv = PlexClient::new(PLEX_TV, account, &cfg.client_identifier, API_TIMEOUT);
+    let resources: Vec<Resource> = tv.get(
+        "/api/v2/resources",
+        &[("includeHttps", "1"), ("includeRelay", "1")],
+    )?;
+    let servers: Vec<Resource> = resources
+        .into_iter()
+        .filter(|r| r.provides.split(',').any(|p| p == "server"))
+        .filter(|r| {
+            cfg.server_id
+                .as_deref()
+                .is_none_or(|id| id == r.client_identifier)
+        })
+        .collect();
+    if servers.is_empty() {
+        bail!("no Plex Media Server found on this account");
+    }
+
+    let reachable: Vec<Option<&Connection>> = thread::scope(|s| {
+        let handles: Vec<_> = servers
+            .iter()
+            .map(|srv| {
+                srv.connections
+                    .iter()
+                    .map(|c| {
+                        (
+                            c,
+                            s.spawn(move || probe(&c.uri, Some(&srv.client_identifier))),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        handles
+            .into_iter()
+            .map(|conns| {
+                conns
+                    .into_iter()
+                    .filter_map(|(c, h)| matches!(h.join(), Ok(true)).then_some(c))
+                    .min_by_key(|c| c.rank())
+            })
+            .collect()
+    });
+
+    let mut choices = Vec::new();
+    for (srv, conn) in servers.iter().zip(reachable) {
+        let Some(conn) = conn else {
+            warn!("server {} unreachable", srv.name);
+            continue;
+        };
+        let token = srv.access_token.as_deref().unwrap_or(account);
+        let client = PlexClient::new(&conn.uri, token, &cfg.client_identifier, API_TIMEOUT);
+        let sections = match music_sections(&client) {
+            Ok(s) => s,
+            Err(e) => {
+                warn!("listing sections on {}: {e:#}", srv.name);
+                continue;
+            }
+        };
+        for sec in sections {
+            choices.push((srv, client.base.clone(), token.to_owned(), sec));
+        }
+    }
+    if choices.is_empty() {
+        bail!("no reachable server with a music library");
+    }
+    let labels: Vec<String> = choices
+        .iter()
+        .map(|(srv, _, _, sec)| format!("{} — {}", srv.name, sec.title))
+        .collect();
+    let (srv, url, token, sec) = choices.swap_remove(choose("Music library", &labels)?);
+
+    info!("using server {} at {url}", srv.name);
+    cfg.server_id = Some(srv.client_identifier.clone());
+    cfg.server_url = Some(url.clone());
+    cfg.server_token = Some(token.clone());
+    cfg.music_section = Some(sec.key);
+    cfg.save()?;
+    Ok(PlexClient::new(
+        &url,
+        &token,
+        &cfg.client_identifier,
+        API_TIMEOUT,
+    ))
+}
+
+fn music_sections(client: &PlexClient) -> Result<Vec<Section>> {
+    let c: Container<Directories<Section>> = client.get("/library/sections", &[])?;
+    Ok(c.mc
+        .items
+        .into_iter()
+        .filter(|s| s.kind == "artist")
+        .collect())
+}
+
+fn ensure_section(client: &PlexClient, cfg: &mut Config) -> Result<()> {
+    if cfg.music_section.is_some() {
+        return Ok(());
+    }
+    let mut sections = music_sections(client)?;
+    if sections.is_empty() {
+        bail!("server has no music library");
+    }
+    let labels: Vec<String> = sections.iter().map(|s| s.title.clone()).collect();
+    cfg.music_section = Some(sections.swap_remove(choose("Music library", &labels)?).key);
+    cfg.save()
+}
+
+fn choose(what: &str, labels: &[String]) -> Result<usize> {
+    if labels.len() == 1 {
+        return Ok(0);
+    }
+    loop {
+        println!("{what}:");
+        for (i, l) in labels.iter().enumerate() {
+            println!("  {}) {l}", i + 1);
+        }
+        print!("Choose [1-{}]: ", labels.len());
+        std::io::stdout().flush()?;
+        let mut line = String::new();
+        if std::io::stdin().read_line(&mut line)? == 0 {
+            bail!("no choice made");
+        }
+        match line.trim().parse::<usize>() {
+            Ok(n) if (1..=labels.len()).contains(&n) => return Ok(n - 1),
+            _ => println!("Invalid choice."),
+        }
+    }
+}

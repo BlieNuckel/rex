@@ -12,6 +12,8 @@ pub struct Config {
     pub client_identifier: String,
     pub token: Option<String>,
     pub server_url: Option<String>,
+    /// `machineIdentifier` of the chosen server, so rediscovery picks the same one
+    pub server_id: Option<String>,
     pub server_token: Option<String>,
     pub music_section: Option<String>,
     pub volume: f32,
@@ -23,6 +25,7 @@ impl Default for Config {
             client_identifier: uuid::Uuid::new_v4().to_string(),
             token: None,
             server_url: None,
+            server_id: None,
             server_token: None,
             music_section: None,
             volume: 0.8,
