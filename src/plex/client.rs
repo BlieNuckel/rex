@@ -54,6 +54,22 @@ impl PlexClient {
             .with_context(|| format!("GET {}{path}", self.base))
     }
 
+    pub fn get_range<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+        start: u32,
+        size: u32,
+    ) -> Result<T> {
+        let req = self
+            .headers(self.agent.get(format!("{}{path}", self.base)), query)
+            .header("X-Plex-Container-Start", start.to_string())
+            .header("X-Plex-Container-Size", size.to_string());
+        req.call()
+            .and_then(|mut r| r.body_mut().read_json())
+            .with_context(|| format!("GET {}{path} [{start}+{size}]", self.base))
+    }
+
     pub fn post<T: DeserializeOwned>(&self, path: &str, query: &[(&str, &str)]) -> Result<T> {
         let req = self.headers(self.agent.post(format!("{}{path}", self.base)), query);
         req.send_empty()

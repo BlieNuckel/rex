@@ -7,7 +7,7 @@ use serde::Deserialize;
 use tracing::{info, warn};
 
 use super::PlexClient;
-use super::models::{Container, Directories, Section};
+use super::models::Container;
 use crate::config::Config;
 
 const PLEX_TV: &str = "https://plex.tv";
@@ -177,7 +177,7 @@ fn discover(cfg: &mut Config, account: &str) -> Result<PlexClient> {
         };
         let token = srv.access_token.as_deref().unwrap_or(account);
         let client = PlexClient::new(&conn.uri, token, &cfg.client_identifier, API_TIMEOUT);
-        let sections = match music_sections(&client) {
+        let sections = match client.music_sections() {
             Ok(s) => s,
             Err(e) => {
                 warn!("listing sections on {}: {e:#}", srv.name);
@@ -211,20 +211,11 @@ fn discover(cfg: &mut Config, account: &str) -> Result<PlexClient> {
     ))
 }
 
-fn music_sections(client: &PlexClient) -> Result<Vec<Section>> {
-    let c: Container<Directories<Section>> = client.get("/library/sections", &[])?;
-    Ok(c.mc
-        .items
-        .into_iter()
-        .filter(|s| s.kind == "artist")
-        .collect())
-}
-
 fn ensure_section(client: &PlexClient, cfg: &mut Config) -> Result<()> {
     if cfg.music_section.is_some() {
         return Ok(());
     }
-    let mut sections = music_sections(client)?;
+    let mut sections = client.music_sections()?;
     if sections.is_empty() {
         bail!("server has no music library");
     }

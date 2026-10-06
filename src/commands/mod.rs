@@ -6,6 +6,7 @@ use tracing_appender::rolling::{RollingFileAppender, Rotation};
 
 use crate::config::{self, Config};
 
+mod debug;
 mod login;
 mod logout;
 mod tui;
@@ -16,6 +17,8 @@ enum Subcommand {
     Login(self::login::Options),
     /// Remove saved tokens
     Logout(self::logout::Options),
+    /// Query the Plex server without the TUI
+    Debug(self::debug::Options),
 }
 
 #[derive(Parser, Debug)]
@@ -33,13 +36,14 @@ impl Options {
         match self.subcommand {
             Some(S::Login(c)) => c.run(cfg),
             Some(S::Logout(c)) => c.run(cfg),
+            Some(S::Debug(c)) => c.run(cfg),
             None => self::tui::Options::default().run(cfg),
         }
     }
 }
 
-// sets up a file logger in the app directory 
-// as rex.log with daily log rotations 
+// sets up a file logger in the app directory
+// as rex.log with daily log rotations
 pub fn setup_logging(level: Level) -> anyhow::Result<()> {
     let dir = config::state_dir()?;
     std::fs::create_dir_all(&dir)?;
