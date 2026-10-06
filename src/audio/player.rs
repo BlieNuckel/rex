@@ -283,10 +283,6 @@ impl Player {
         match loaded {
             Ok(l) => {
                 self.out.resume();
-                debug!(
-                    "{} starts at output frame {}",
-                    l.track.rating_key, self.written
-                );
                 self.starts.push_back((self.written, l.track.clone()));
                 self.decoding = Some(l);
                 self.paused = false;
@@ -458,17 +454,12 @@ impl Player {
                 }
                 let owed = self.resampler.as_ref().map_or(0, Resampler::owed);
                 let at = self.written + self.queued_frames() + owed;
-                debug!(
-                    "gapless: {} starts at output frame {at}",
-                    n.track.rating_key
-                );
                 self.starts.push_back((at, n.track.clone()));
                 self.decoding = Some(n);
             }
             None => {
                 self.flush_resampler();
                 self.end_at = Some(self.written + self.queued_frames());
-                debug!("queue ends at output frame {:?}", self.end_at);
             }
         }
     }
