@@ -6,10 +6,14 @@ edition = "2024"
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
+cpal = "0.18.2"
 directories = "6.0.0"
 ratatui = "0.30.2"
+rtrb = "0.4.0"
+rubato = "5.0.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+symphonia = { version = "0.6.1", default-features = false, features = ["flac", "mp3", "aac", "alac", "isomp4", "vorbis", "ogg", "wav", "pcm", "id3v1", "id3v2", "opt-simd"] }
 toml = "1.1.6"
 tracing = "0.1.44"
 tracing-appender = "0.2.5"

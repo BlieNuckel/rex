@@ -33,6 +33,14 @@ impl PlexClient {
         Ok(Page { items, total })
     }
 
+    pub fn track(&self, rating_key: &str) -> Result<Track> {
+        let path = format!("/library/metadata/{rating_key}");
+        let c: Container<MetadataList> = self.get(&path, &[])?;
+        let item = c.mc.items.into_iter().next();
+        item.map(Track::from)
+            .ok_or_else(|| anyhow::anyhow!("no item with rating key {rating_key}"))
+    }
+
     pub fn sections(&self) -> Result<Vec<Section>> {
         let c: Container<Directories<Section>> = self.get("/library/sections", &[])?;
         Ok(c.mc.items)

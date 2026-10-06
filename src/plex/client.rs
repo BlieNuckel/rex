@@ -70,6 +70,23 @@ impl PlexClient {
             .with_context(|| format!("GET {}{path} [{start}+{size}]", self.base))
     }
 
+    /// Streaming GET for media downloads; returns `Content-Length` and the body reader.
+    pub fn stream(&self, path: &str) -> Result<(Option<u64>, ureq::BodyReader<'static>)> {
+        // No per-read timeout, so a stalled connection blocks the fetch thread until
+        // the source is dropped; add a read watchdog if that shows up in practice.
+        let agent: Agent = Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_recv_response(Some(Duration::from_secs(15)))
+            .build()
+            .into();
+        let resp = self
+            .headers(agent.get(format!("{}{path}", self.base)), &[])
+            .call()
+            .with_context(|| format!("GET {}{path}", self.base))?;
+        let body = resp.into_body();
+        Ok((body.content_length(), body.into_reader()))
+    }
+
     pub fn post<T: DeserializeOwned>(&self, path: &str, query: &[(&str, &str)]) -> Result<T> {
         let req = self.headers(self.agent.post(format!("{}{path}", self.base)), query);
         req.send_empty()

@@ -2,6 +2,7 @@ use clap::Parser;
 use commands::setup_logging;
 use std::process::ExitCode;
 
+mod audio;
 mod commands;
 mod config;
 mod plex;
