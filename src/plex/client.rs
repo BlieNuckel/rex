@@ -6,6 +6,9 @@ use ureq::{Agent, RequestBuilder};
 
 pub struct PlexClient {
     agent: Agent,
+    /// kept separate from `agent` so media downloads aren't cut off by its global timeout,
+    /// and long-lived so its connection pool skips a TCP/TLS handshake per track
+    stream_agent: Agent,
     pub base: String,
     token: String,
     client_id: String,
@@ -18,11 +21,19 @@ impl PlexClient {
             .timeout_global(Some(timeout))
             .build()
             .into();
+        // no per-read timeout, so a stalled download blocks its fetch thread until the
+        // source is dropped; add a read watchdog if that shows up in practice
+        let stream_agent = Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_recv_response(Some(Duration::from_secs(15)))
+            .build()
+            .into();
         let device = std::fs::read_to_string("/proc/sys/kernel/hostname")
             .map(|h| h.trim().to_owned())
             .unwrap_or_else(|_| "rex".into());
         Self {
             agent,
+            stream_agent,
             base: base.trim_end_matches('/').to_owned(),
             token: token.to_owned(),
             client_id: client_id.to_owned(),
@@ -72,15 +83,8 @@ impl PlexClient {
 
     /// Streaming GET for media downloads; returns `Content-Length` and the body reader
     pub fn stream(&self, path: &str) -> Result<(Option<u64>, ureq::BodyReader<'static>)> {
-        // no per-read timeout, so a stalled connection blocks the fetch thread until
-        // the source is dropped; add a read watchdog if that shows up in practice
-        let agent: Agent = Agent::config_builder()
-            .timeout_connect(Some(Duration::from_secs(10)))
-            .timeout_recv_response(Some(Duration::from_secs(15)))
-            .build()
-            .into();
         let resp = self
-            .headers(agent.get(format!("{}{path}", self.base)), &[])
+            .headers(self.stream_agent.get(format!("{}{path}", self.base)), &[])
             .call()
             .with_context(|| format!("GET {}{path}", self.base))?;
         let body = resp.into_body();
