@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use super::keys::Action;
 use super::queue::Queue;
+use super::reporting::Reporter;
 use super::{AddMode, ApiRequest, PageData, TrackSource};
 use crate::audio::player::PlayerCmd;
 use crate::plex::api::SearchResults;
@@ -97,7 +98,7 @@ pub enum Focus {
 }
 
 pub struct AppState {
-    api: SyncSender<ApiRequest>,
+    pub(super) api: SyncSender<ApiRequest>,
     pub(super) player: SyncSender<PlayerCmd>,
     next_id: u64,
     pub queue: Queue,
@@ -108,6 +109,9 @@ pub struct AppState {
     pub(super) enqueued: Option<(u64, String)>,
     pub(super) failures: usize,
     pub(super) quit_armed: Option<Instant>,
+    pub(super) reporter: Reporter,
+    /// now-playing changed in a way media widgets should hear about
+    pub mpris_dirty: bool,
     pub focus: Focus,
     pub section: usize,
     pub stack: Vec<View>,
@@ -135,6 +139,8 @@ impl AppState {
             enqueued: None,
             failures: 0,
             quit_armed: None,
+            reporter: Reporter::default(),
+            mpris_dirty: false,
             focus: Focus::List,
             section: 0,
             stack: Vec::new(),

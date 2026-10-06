@@ -13,6 +13,7 @@ rtrb = "0.4.0"
 rubato = "5.0.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+souvlaki = "0.8.3"
 symphonia = { version = "0.6.1", default-features = false, features = ["flac", "mp3", "aac", "alac", "isomp4", "vorbis", "ogg", "wav", "pcm", "id3v2", "opt-simd"] }
 toml = "1.1.6"
 tracing = "0.1.44"
@@ -21,6 +22,9 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 unicode-width = "0.2.2"
 ureq = { version = "3.4.2", features = ["json"] }
 uuid = { version = "1.27.0", features = ["v4"] }
+
+[target.'cfg(unix)'.dependencies]
+signal-hook = "0.4"
 
 [profile.release]
 opt-level = 3

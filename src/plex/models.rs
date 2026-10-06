@@ -50,6 +50,8 @@ pub struct Track {
     pub grandparent_title: String,
     pub parent_title: String,
     pub parent_rating_key: String,
+    /// album art path, falling back to the track's own thumbnail
+    pub thumb: String,
     pub index: Option<u32>,
     pub duration_ms: Option<u64>,
     pub part_key: String,
@@ -73,6 +75,8 @@ pub(super) struct RawItem {
     parent_title: String,
     grandparent_title: String,
     parent_rating_key: String,
+    thumb: String,
+    parent_thumb: String,
     year: Option<u32>,
     leaf_count: Option<u32>,
     index: Option<u32>,
@@ -135,6 +139,11 @@ impl From<RawItem> for Track {
             grandparent_title: r.grandparent_title,
             parent_title: r.parent_title,
             parent_rating_key: r.parent_rating_key,
+            thumb: if r.parent_thumb.is_empty() {
+                r.thumb
+            } else {
+                r.parent_thumb
+            },
             index: r.index,
             duration_ms: r.duration,
             part_key: media

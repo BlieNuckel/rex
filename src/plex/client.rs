@@ -115,6 +115,24 @@ impl PlexClient {
         })
     }
 
+    /// fire-and-forget GET for endpoints whose response body we don't need
+    pub fn send(&self, path: &str, query: &[(&str, &str)], timeout: Duration) -> Result<()> {
+        self.headers(self.agent.get(format!("{}{path}", self.base)), query)
+            .config()
+            .timeout_global(Some(timeout))
+            .build()
+            .call()
+            .and_then(|r| r.into_body().read_to_vec())
+            .with_context(|| format!("GET {}{path}", self.base))?;
+        Ok(())
+    }
+
+    /// absolute URL for `path` with the token in the query, for consumers that can't send headers
+    pub fn url_with_token(&self, path: &str) -> String {
+        let sep = if path.contains('?') { '&' } else { '?' };
+        format!("{}{path}{sep}X-Plex-Token={}", self.base, self.token)
+    }
+
     pub fn post<T: DeserializeOwned>(&self, path: &str, query: &[(&str, &str)]) -> Result<T> {
         let req = self.headers(self.agent.post(format!("{}{path}", self.base)), query);
         req.send_empty()

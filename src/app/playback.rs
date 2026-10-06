@@ -1,7 +1,10 @@
 use std::time::{Duration, Instant};
 
+use souvlaki::{MediaControlEvent, SeekDirection};
 use tracing::warn;
 
+use super::ApiRequest;
+use super::reporting::Report;
 use super::state::{AppState, ListKind};
 use crate::audio::player::{PlayerCmd, PlayerEvent};
 
@@ -18,7 +21,20 @@ impl AppState {
         }
     }
 
+    /// one request per event so a worker sends them in order (e.g. stopped before playing)
+    fn report(&self, reports: Vec<Report>) {
+        if !reports.is_empty() && self.api.try_send(ApiRequest::Report(reports)).is_err() {
+            warn!("dropping playback reports, API queue full");
+        }
+    }
+
     pub fn play_index(&mut self, i: usize) {
+        if i >= self.queue.len() {
+            return;
+        }
+        let stopped = self.reporter.stopped();
+        self.report(stopped);
+        self.mpris_dirty = true;
         let Some(e) = self.queue.entries.get(i) else {
             return;
         };
@@ -34,6 +50,9 @@ impl AppState {
     }
 
     pub fn stop(&mut self) {
+        let stopped = self.reporter.stopped();
+        self.report(stopped);
+        self.mpris_dirty = true;
         self.send(PlayerCmd::Stop);
         self.now.track = None;
         self.now.position_ms = 0;
@@ -51,6 +70,9 @@ impl AppState {
             return;
         }
         self.now.paused = !self.now.paused;
+        let reports = self.reporter.set_paused(self.now.paused, Instant::now());
+        self.report(reports);
+        self.mpris_dirty = true;
         self.send(if self.now.paused {
             PlayerCmd::Pause
         } else {
@@ -67,27 +89,36 @@ impl AppState {
 
     pub fn previous(&mut self) {
         if self.now.track.is_some() && self.now.position_ms > RESTART_AFTER_MS {
-            self.send(PlayerCmd::Seek(0));
-            self.now.position_ms = 0;
+            self.seek_to(0);
         } else if let Some(i) = self.queue.prev_index() {
             self.play_index(i);
         }
     }
 
     pub fn seek_by(&mut self, forward: bool) {
-        let Some(t) = &self.now.track else { return };
         let delta = if forward { SEEK_STEP_MS } else { -SEEK_STEP_MS };
-        let mut target = self.now.position_ms.saturating_add_signed(delta);
-        if let Some(d) = t.duration_ms {
-            target = target.min(d.saturating_sub(1_000));
-        }
+        self.seek_to(self.now.position_ms.saturating_add_signed(delta));
+    }
+
+    /// seeks the playing track, staying a second clear of the end
+    fn seek_to(&mut self, ms: u64) {
+        let Some(t) = &self.now.track else { return };
+        let target = match t.duration_ms {
+            Some(d) => ms.min(d.saturating_sub(1_000)),
+            None => ms,
+        };
         self.now.position_ms = target;
+        self.mpris_dirty = true;
         self.send(PlayerCmd::Seek(target));
     }
 
     pub fn change_volume(&mut self, up: bool) {
         let step = if up { VOLUME_STEP } else { -VOLUME_STEP };
-        self.now.volume = ((self.now.volume + step) * 20.0).round().clamp(0.0, 20.0) / 20.0;
+        self.set_volume(((self.now.volume + step) * 20.0).round() / 20.0);
+    }
+
+    fn set_volume(&mut self, v: f32) {
+        self.now.volume = v.clamp(0.0, 1.0);
         self.send(PlayerCmd::SetVolume(self.now.volume));
     }
 
@@ -131,6 +162,8 @@ impl AppState {
         match ev {
             PlayerEvent::Position(ms) => {
                 self.now.position_ms = ms;
+                let reports = self.reporter.position(ms, Instant::now());
+                self.report(reports);
                 self.sync_next();
             }
             PlayerEvent::TrackStarted(t) => {
@@ -152,6 +185,9 @@ impl AppState {
                 if let Some(i) = entry.and_then(|(id, _)| self.queue.position(id)) {
                     self.queue.current = Some(i);
                 }
+                let reports = self.reporter.started(&t, Instant::now());
+                self.report(reports);
+                self.mpris_dirty = true;
                 self.now.track = Some(t);
                 self.now.position_ms = 0;
                 self.now.buffering = false;
@@ -159,6 +195,9 @@ impl AppState {
                 self.sync_next();
             }
             PlayerEvent::TrackEnded(_) => {
+                let reports = self.reporter.ended();
+                self.report(reports);
+                self.mpris_dirty = true;
                 // a pre-opened successor is about to report TrackStarted
                 if self.enqueued.is_some() {
                     return;
@@ -196,6 +235,32 @@ impl AppState {
                 }
             }
             PlayerEvent::BufferingChanged(b) => self.now.buffering = b,
+        }
+    }
+
+    /// media keys and desktop widgets
+    pub fn on_mpris(&mut self, ev: MediaControlEvent) {
+        let playing = self.now.track.is_some() && !self.now.paused;
+        match ev {
+            MediaControlEvent::Play if !playing => self.toggle_pause(),
+            MediaControlEvent::Pause if playing => self.toggle_pause(),
+            MediaControlEvent::Toggle => self.toggle_pause(),
+            MediaControlEvent::Next => self.skip(),
+            MediaControlEvent::Previous => self.previous(),
+            MediaControlEvent::Stop => self.stop(),
+            MediaControlEvent::Seek(dir) => self.seek_by(dir == SeekDirection::Forward),
+            MediaControlEvent::SeekBy(dir, by) => {
+                let by = by.as_millis() as u64;
+                let pos = self.now.position_ms;
+                self.seek_to(match dir {
+                    SeekDirection::Forward => pos.saturating_add(by),
+                    SeekDirection::Backward => pos.saturating_sub(by),
+                });
+            }
+            MediaControlEvent::SetPosition(p) => self.seek_to(p.0.as_millis() as u64),
+            MediaControlEvent::SetVolume(v) => self.set_volume(v as f32),
+            MediaControlEvent::Quit => self.quit = true,
+            _ => {}
         }
     }
 

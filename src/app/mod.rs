@@ -1,23 +1,30 @@
 pub mod keys;
 mod playback;
 pub mod queue;
+mod reporting;
 pub mod state;
 
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
+use tracing::warn;
 
 use crate::audio::player::{self, PlayerCmd, PlayerEvent};
 use crate::config::{self, Config};
+use crate::mpris::Mpris;
 use crate::plex::PlexClient;
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Page, Playlist, Track};
+use reporting::Report;
+use souvlaki::MediaControlEvent;
 use state::{AppState, ListKind};
 
 const API_WORKERS: usize = 2;
+const REPORT_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Debug, Clone)]
 pub enum AddMode {
@@ -46,6 +53,7 @@ pub enum ApiRequest {
     Search {
         query: String,
     },
+    Report(Vec<Report>),
 }
 
 pub enum PageData {
@@ -71,6 +79,9 @@ pub enum AppEvent {
         result: Result<SearchResults, String>,
     },
     Player(PlayerEvent),
+    Mpris(MediaControlEvent),
+    /// SIGTERM, SIGINT or SIGHUP
+    Signal,
 }
 
 pub fn run(client: Arc<PlexClient>, cfg: &mut Config) -> Result<()> {
@@ -82,16 +93,22 @@ pub fn run(client: Arc<PlexClient>, cfg: &mut Config) -> Result<()> {
     let (api_tx, api_rx) = sync_channel(16);
     let cache = config::dirs()?.cache_dir().join("stream");
     let (player_tx, player_rx) = player::spawn(client.clone(), cache, cfg.volume)?;
-    spawn_api_workers(client, section, api_rx, tx.clone())?;
+    spawn_api_workers(client.clone(), section, api_rx, tx.clone())?;
     spawn_forwarder(player_rx, tx.clone())?;
+    #[cfg(unix)]
+    spawn_signals(tx.clone())?;
+    let mut mpris = Mpris::start(tx.clone());
     spawn_input(tx)?;
 
     let mut state = AppState::new(api_tx, player_tx.clone(), cfg.volume);
     // ratatui::init installs a panic hook that restores the terminal
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, &mut state, &rx);
+    let result = event_loop(&mut terminal, &mut state, &rx, mpris.as_mut(), &client);
     ratatui::restore();
     let _ = player_tx.send(PlayerCmd::Stop);
+    for r in state.reporter.stopped() {
+        send_report(&client, &r);
+    }
     cfg.volume = state.now.volume;
     cfg.save()?;
     result
@@ -101,6 +118,8 @@ fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut AppState,
     rx: &Receiver<AppEvent>,
+    mut mpris: Option<&mut Mpris>,
+    client: &PlexClient,
 ) -> Result<()> {
     loop {
         terminal.draw(|f| crate::ui::draw(f, state))?;
@@ -116,6 +135,12 @@ fn event_loop(
             handle(state, ev);
         }
         state.expire_message();
+        if state.mpris_dirty {
+            state.mpris_dirty = false;
+            if let Some(m) = mpris.as_deref_mut() {
+                m.update(&state.now, client);
+            }
+        }
         if state.quit {
             return Ok(());
         }
@@ -144,6 +169,57 @@ fn handle(state: &mut AppState, ev: AppEvent) {
         },
         AppEvent::Search { query, result } => state.on_search(query, result),
         AppEvent::Player(ev) => state.on_player(ev),
+        AppEvent::Mpris(ev) => state.on_mpris(ev),
+        AppEvent::Signal => state.quit = true,
+    }
+}
+
+#[cfg(unix)]
+fn spawn_signals(tx: SyncSender<AppEvent>) -> Result<()> {
+    use signal_hook::consts::{SIGHUP, SIGINT, SIGTERM};
+    let mut signals = signal_hook::iterator::Signals::new([SIGTERM, SIGINT, SIGHUP])?;
+    thread::Builder::new()
+        .name("signals".into())
+        .spawn(move || {
+            for _ in signals.forever() {
+                if tx.send(AppEvent::Signal).is_err() {
+                    break;
+                }
+            }
+        })?;
+    Ok(())
+}
+
+fn send_report(c: &PlexClient, r: &Report) {
+    let result = match r {
+        Report::Timeline {
+            rating_key,
+            state,
+            time_ms,
+            duration_ms,
+        } => {
+            let key = format!("/library/metadata/{rating_key}");
+            let time = time_ms.to_string();
+            let duration = duration_ms.unwrap_or(0).to_string();
+            let query = [
+                ("ratingKey", rating_key.as_str()),
+                ("key", &key),
+                ("state", state.as_str()),
+                ("time", &time),
+                ("duration", &duration),
+            ];
+            c.send("/:/timeline", &query, REPORT_TIMEOUT)
+        }
+        Report::Scrobble { rating_key } => {
+            let query = [
+                ("key", rating_key.as_str()),
+                ("identifier", "com.plexapp.plugins.library"),
+            ];
+            c.send("/:/scrobble", &query, REPORT_TIMEOUT)
+        }
+    };
+    if let Err(e) = result {
+        warn!("playback report: {e:#}");
     }
 }
 
@@ -202,6 +278,10 @@ fn spawn_api_workers(
                                 .map_err(|e| format!("{e:#}")),
                             query,
                         },
+                        ApiRequest::Report(reports) => {
+                            reports.iter().for_each(|r| send_report(&client, r));
+                            continue;
+                        }
                         ApiRequest::Tracks { source, mode } => AppEvent::Tracks {
                             mode,
                             result: fetch_tracks(&client, &source).map_err(|e| format!("{e:#}")),
