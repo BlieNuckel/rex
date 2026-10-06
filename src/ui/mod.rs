@@ -6,6 +6,7 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::keys::{BINDINGS, key_name};
+use crate::app::queue::{Queue, Repeat};
 use crate::app::state::{AppState, Focus, Items, ListKind, SECTIONS, View};
 
 const SIDEBAR_WIDTH: u16 = 19;
@@ -23,9 +24,14 @@ pub fn draw(f: &mut Frame, s: &mut AppState) {
 
     draw_sidebar(f, s, side);
     draw_list(f, s, list);
-    if let Some((m, _)) = &s.message {
-        let text = truncate(m, msg.width as usize);
-        f.render_widget(Paragraph::new(text).style(Style::new().fg(Color::Red)), msg);
+    if let Some(m) = &s.message {
+        let text = truncate(&m.text, msg.width as usize);
+        let style = if m.error {
+            Style::new().fg(Color::Red)
+        } else {
+            Style::new()
+        };
+        f.render_widget(Paragraph::new(text).style(style), msg);
     }
     draw_now_playing(f, s, bar);
     if s.help {
@@ -51,7 +57,11 @@ fn draw_sidebar(f: &mut Frame, s: &AppState, area: Rect) {
         .enumerate()
         .map(|(i, name)| {
             let selected = i == s.section;
-            let text = format!("{}{name}", if selected { "> " } else { "  " });
+            let marker = if selected { "> " } else { "  " };
+            let text = match i {
+                4 => format!("{marker}{name} ({})", s.queue.len()),
+                _ => format!("{marker}{name}"),
+            };
             let line = Line::raw(fit(&text, "", width));
             if selected {
                 line.style(selected_style(s.focus == Focus::Sidebar))
@@ -76,8 +86,10 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
     let crumb = truncate_left(&breadcrumb(&s.stack), title_width);
     let focused = s.focus == Focus::List;
     let Some(v) = s.stack.last_mut() else { return };
+    let is_queue = matches!(v.kind, ListKind::Queue);
 
     let count = match (v.total, v.loading) {
+        _ if is_queue => format!(" {} ", s.queue.len()),
         (Some(t), _) if v.items.len() < t as usize => format!(" {}/{t} ", v.items.len()),
         (Some(t), _) => format!(" {t} "),
         (None, true) => " … ".to_owned(),
@@ -92,7 +104,11 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
     let height = inner.height as usize;
     let width = inner.width as usize;
     s.list_height = height;
-    let len = v.items.len();
+    let len = if is_queue {
+        s.queue.len()
+    } else {
+        v.items.len()
+    };
     if len == 0 {
         let hint = if v.loading {
             "loading…"
@@ -115,7 +131,11 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
     let end = (v.offset + height).min(len);
     let lines: Vec<Line> = (v.offset..end)
         .map(|i| {
-            let (left, right) = row(v, i);
+            let (left, right) = if is_queue {
+                queue_row(&s.queue, i)
+            } else {
+                row(v, i)
+            };
             let marker = if i == v.selected { "> " } else { "  " };
             let line = Line::raw(fit(&format!("{marker}{left}"), &right, width));
             if i == v.selected {
@@ -164,21 +184,73 @@ fn row(v: &View, i: usize) -> (String, String) {
     }
 }
 
+fn queue_row(q: &Queue, i: usize) -> (String, String) {
+    let t = &q.entries[i].track;
+    let playing = if q.current == Some(i) { "▶ " } else { "  " };
+    let left = format!("{playing}{} — {}", t.title, t.grandparent_title);
+    (left, t.duration_ms.map_or(String::new(), crate::fmt_ms))
+}
+
 fn draw_now_playing(f: &mut Frame, s: &AppState, area: Rect) {
     let block = Block::bordered();
     let inner = block.inner(area);
     f.render_widget(block, area);
     let width = inner.width as usize;
-    let debug = if s.debug_line {
-        format!("rss {:.1} MB", crate::rss_kb() as f64 / 1024.0)
-    } else {
-        String::new()
+    let now = &s.now;
+
+    let first = match &now.track {
+        None => fit("■ not playing", "", width),
+        Some(t) => {
+            let icon = if now.paused { "‖" } else { "▶" };
+            let mut text = format!("{icon} {}", t.title);
+            for part in [&t.grandparent_title, &t.parent_title] {
+                if !part.is_empty() {
+                    text.push_str(if text.contains(" — ") {
+                        " · "
+                    } else {
+                        " — "
+                    });
+                    text.push_str(part);
+                }
+            }
+            fit(&text, if now.buffering { "buffering…" } else { "" }, width)
+        }
     };
-    let lines = vec![
-        Line::raw(fit("■ not playing", "", width)),
-        Line::raw(fit("", &debug, width)),
-    ];
-    f.render_widget(Paragraph::new(lines), inner);
+
+    let mut right = String::new();
+    let duration = now.track.as_ref().and_then(|t| t.duration_ms);
+    if let Some(d) = duration {
+        right.push_str(&format!(" {}", crate::fmt_ms(d)));
+    }
+    right.push_str(&format!("  vol {:.0}%", now.volume * 100.0));
+    if s.queue.shuffle {
+        right.push_str(" ⇄");
+    }
+    match s.queue.repeat {
+        Repeat::Off => {}
+        Repeat::All => right.push_str(" ↻"),
+        Repeat::One => right.push_str(" ↻1"),
+    }
+    if s.debug_line {
+        right.push_str(&format!("  rss {:.1} MB", crate::rss_kb() as f64 / 1024.0));
+    }
+    let left = match now.track {
+        Some(_) => format!("{} ", crate::fmt_ms(now.position_ms)),
+        None => String::new(),
+    };
+    let bar_width = width.saturating_sub(left.width() + right.width());
+    let bar = match duration {
+        Some(d) if d > 0 && now.track.is_some() && bar_width >= 5 => {
+            let filled = ((now.position_ms.min(d) as f64 / d as f64) * bar_width as f64) as usize;
+            format!("{}{}", "━".repeat(filled), "─".repeat(bar_width - filled))
+        }
+        _ => String::new(),
+    };
+    let second = fit(&format!("{left}{bar}"), right.trim_start(), width);
+    f.render_widget(
+        Paragraph::new(vec![Line::raw(first), Line::raw(second)]),
+        inner,
+    );
 }
 
 fn draw_help(f: &mut Frame) {
@@ -194,8 +266,14 @@ fn draw_help(f: &mut Frame) {
     let key_width = keys.iter().map(|k| k.width()).max().unwrap_or(0);
 
     let area = f.area();
-    let width = 64.min(area.width);
-    let height = (groups.len() as u16 + 2).min(area.height);
+    let cols = if groups.len() + 2 > area.height as usize {
+        2
+    } else {
+        1
+    };
+    let rows = groups.len().div_ceil(cols);
+    let width = (cols as u16 * 39 + 2).min(area.width);
+    let height = (rows as u16 + 2).min(area.height);
     let popup = Rect {
         x: area.x + (area.width - width) / 2,
         y: area.y + (area.height - height) / 2,
@@ -204,12 +282,19 @@ fn draw_help(f: &mut Frame) {
     };
     let block = Block::bordered().title(" Keys — ? to close ");
     let inner = block.inner(popup);
-    let lines: Vec<Line> = groups
+    let entries: Vec<String> = groups
         .iter()
         .zip(&keys)
-        .map(|((desc, _), k)| {
-            let pad = " ".repeat(key_width - k.width() + 2);
-            Line::raw(truncate(&format!("{k}{pad}{desc}"), inner.width as usize))
+        .map(|((desc, _), k)| format!("{k}{}{desc}", " ".repeat(key_width - k.width() + 2)))
+        .collect();
+    let col_width = inner.width as usize / cols;
+    let lines: Vec<Line> = (0..rows)
+        .map(|r| {
+            let line: String = (0..cols)
+                .filter_map(|c| entries.get(c * rows + r))
+                .map(|e| fit(e, "", col_width))
+                .collect();
+            Line::raw(line)
         })
         .collect();
     f.render_widget(Clear, popup);

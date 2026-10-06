@@ -30,6 +30,7 @@ pub enum PlayerCmd {
     Seek(u64),
     Stop,
     SetVolume(f32),
+    ClearNext,
 }
 
 #[derive(Debug)]
@@ -37,7 +38,7 @@ pub enum PlayerEvent {
     Position(u64),
     TrackStarted(Track),
     TrackEnded(String),
-    Error(String),
+    Error { rating_key: String, message: String },
     BufferingChanged(bool),
 }
 
@@ -158,6 +159,13 @@ impl Player {
         }
     }
 
+    fn error(&self, rating_key: &str, message: String) {
+        self.emit(PlayerEvent::Error {
+            rating_key: rating_key.to_owned(),
+            message,
+        });
+    }
+
     fn queued_frames(&self) -> u64 {
         ((self.ready.len() - self.ready_pos) / 2) as u64
     }
@@ -196,6 +204,10 @@ impl Player {
                 self.out.suspend();
             }
             PlayerCmd::SetVolume(v) => self.out.set_volume(v),
+            PlayerCmd::ClearNext => {
+                self.next = None;
+                self.next_pending = None;
+            }
         }
     }
 
@@ -230,7 +242,7 @@ impl Player {
                 self.paused = false;
                 self.out.set_paused(false);
             }
-            Err(e) => self.emit(PlayerEvent::Error(format!("{}: {e:#}", track.title))),
+            Err(e) => self.error(&track.rating_key, format!("{}: {e:#}", track.title)),
         }
     }
 
@@ -268,12 +280,14 @@ impl Player {
         match res {
             Ok(l) => {
                 self.next = Some(l);
-                if self.decoding.is_none() && self.end_at.is_some() {
+                // decoding already ran out (or playback fully ended): chain it in right away
+                if self.decoding.is_none() {
                     self.end_at = None;
+                    self.out.resume();
                     self.advance();
                 }
             }
-            Err(e) => self.emit(PlayerEvent::Error(format!("{e:#}"))),
+            Err(e) => self.error(&rk, format!("{e:#}")),
         }
     }
 
@@ -289,7 +303,8 @@ impl Player {
         let reached = match cur.dec.seek(ms) {
             Ok(r) => r,
             Err(e) => {
-                self.emit(PlayerEvent::Error(format!("seek: {e:#}")));
+                let rk = cur.track.rating_key.clone();
+                self.error(&rk, format!("seek: {e:#}"));
                 return;
             }
         };
@@ -332,17 +347,20 @@ impl Player {
             self.pcm.clear();
             match cur.dec.next(&mut self.pcm) {
                 Ok(true) => {
-                    let rate = cur.dec.rate();
+                    let (rate, rk) = (cur.dec.rate(), cur.track.rating_key.clone());
                     if let Err(e) = self.resample(rate) {
-                        self.emit(PlayerEvent::Error(format!("resampling: {e:#}")));
+                        self.error(&rk, format!("resampling: {e:#}"));
                         self.advance();
                     }
                 }
                 Ok(false) => self.advance(),
                 Err(e) => {
                     warn!("decode error in {}: {e:#}", cur.track.title);
-                    let msg = format!("{}: {e:#}", cur.track.title);
-                    self.emit(PlayerEvent::Error(msg));
+                    let (rk, msg) = (
+                        cur.track.rating_key.clone(),
+                        format!("{}: {e:#}", cur.track.title),
+                    );
+                    self.error(&rk, msg);
                     self.advance();
                 }
             }

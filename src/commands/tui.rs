@@ -1,7 +1,7 @@
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 
 use crate::config::Config;
@@ -18,11 +18,7 @@ impl Options {
         }
         println!("Connecting…");
         let client = auth::connect(cfg)?;
-        let section = cfg
-            .music_section
-            .clone()
-            .context("no music section selected")?;
-        crate::app::run(Arc::new(client), section)?;
+        crate::app::run(Arc::new(client), cfg)?;
         Ok(ExitCode::SUCCESS)
     }
 }

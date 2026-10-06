@@ -2,7 +2,9 @@ use std::sync::mpsc::SyncSender;
 use std::time::{Duration, Instant};
 
 use super::keys::Action;
-use super::{ApiRequest, PageData};
+use super::queue::Queue;
+use super::{AddMode, ApiRequest, PageData, TrackSource};
+use crate::audio::player::PlayerCmd;
 use crate::plex::models::{Album, Artist, Playlist, Track};
 
 const PREFETCH_MARGIN: usize = 50;
@@ -61,6 +63,21 @@ impl View {
     }
 }
 
+#[derive(Default)]
+pub struct NowPlaying {
+    pub track: Option<Track>,
+    pub position_ms: u64,
+    pub paused: bool,
+    pub buffering: bool,
+    pub volume: f32,
+}
+
+pub struct Message {
+    pub text: String,
+    pub at: Instant,
+    pub error: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
     Sidebar,
@@ -69,22 +86,41 @@ pub enum Focus {
 
 pub struct AppState {
     api: SyncSender<ApiRequest>,
+    pub(super) player: SyncSender<PlayerCmd>,
     next_id: u64,
+    pub queue: Queue,
+    pub now: NowPlaying,
+    /// queue entry id and rating key of the last `Load` not yet confirmed by `TrackStarted`
+    pub(super) loading: Option<(u64, String)>,
+    /// queue entry id and rating key handed to the player as the gapless successor
+    pub(super) enqueued: Option<(u64, String)>,
+    pub(super) failures: usize,
+    pub(super) quit_armed: Option<Instant>,
     pub focus: Focus,
     pub section: usize,
     pub stack: Vec<View>,
     pub help: bool,
     pub debug_line: bool,
-    pub message: Option<(String, Instant)>,
+    pub message: Option<Message>,
     pub list_height: usize,
     pub quit: bool,
 }
 
 impl AppState {
-    pub fn new(api: SyncSender<ApiRequest>) -> Self {
+    pub fn new(api: SyncSender<ApiRequest>, player: SyncSender<PlayerCmd>, volume: f32) -> Self {
         let mut s = Self {
             api,
+            player,
             next_id: 0,
+            queue: Queue::default(),
+            now: NowPlaying {
+                volume,
+                ..Default::default()
+            },
+            loading: None,
+            enqueued: None,
+            failures: 0,
+            quit_armed: None,
             focus: Focus::List,
             section: 0,
             stack: Vec::new(),
@@ -106,21 +142,42 @@ impl AppState {
         self.stack.last_mut()
     }
 
-    pub fn error(&mut self, msg: String) {
-        tracing::warn!("{msg}");
-        self.message = Some((msg, Instant::now()));
+    pub fn error(&mut self, text: String) {
+        tracing::warn!("{text}");
+        self.message = Some(Message {
+            text,
+            at: Instant::now(),
+            error: true,
+        });
+    }
+
+    pub fn info(&mut self, text: String) {
+        self.message = Some(Message {
+            text,
+            at: Instant::now(),
+            error: false,
+        });
     }
 
     /// how long until the transient message should disappear
     pub fn next_deadline(&self) -> Option<Duration> {
         self.message
             .as_ref()
-            .map(|(_, at)| MESSAGE_TTL.saturating_sub(at.elapsed()))
+            .map(|m| MESSAGE_TTL.saturating_sub(m.at.elapsed()))
     }
 
     pub fn expire_message(&mut self) {
         if self.next_deadline().is_some_and(|d| d.is_zero()) {
             self.message = None;
+        }
+    }
+
+    /// number of rows in the current list (the queue view renders the queue itself)
+    pub fn list_len(&self) -> usize {
+        match self.view() {
+            Some(v) if matches!(v.kind, ListKind::Queue) => self.queue.len(),
+            Some(v) => v.items.len(),
+            None => 0,
         }
     }
 
@@ -253,9 +310,24 @@ impl AppState {
                 self.set_section(i);
                 self.focus = Focus::List;
             }
+            Action::PlayPause => self.toggle_pause(),
+            Action::Next => self.skip(),
+            Action::Previous => self.previous(),
+            Action::SeekForward => self.seek_by(true),
+            Action::SeekBack => self.seek_by(false),
+            Action::VolumeUp => self.change_volume(true),
+            Action::VolumeDown => self.change_volume(false),
+            Action::Shuffle => self.toggle_shuffle(),
+            Action::Repeat => self.cycle_repeat(),
+            Action::Append => self.add_selected(AddMode::Append),
+            Action::PlayNext => self.add_selected(AddMode::Next),
+            Action::Remove => self.queue_edit(|s, i| s.remove_at(i)),
+            Action::MoveDown => self.queue_edit(|s, i| s.move_at(i, true)),
+            Action::MoveUp => self.queue_edit(|s, i| s.move_at(i, false)),
+            Action::Clear => self.queue_edit(|s, _| s.clear_queue()),
             Action::Help => self.help = true,
             Action::DebugLine => self.debug_line = !self.debug_line,
-            Action::Quit => self.quit = true,
+            Action::Quit => self.request_quit(),
         }
     }
 
@@ -271,8 +343,8 @@ impl AppState {
                 }
             }
             Focus::List => {
+                let last = self.list_len().saturating_sub(1);
                 let Some(v) = self.view_mut() else { return };
-                let last = v.items.len().saturating_sub(1);
                 v.selected = v.selected.saturating_add_signed(delta).min(last);
                 self.ensure_loaded();
             }
@@ -286,6 +358,9 @@ impl AppState {
         }
         let Some(v) = self.view() else { return };
         let i = v.selected;
+        if matches!(v.kind, ListKind::Queue) {
+            return self.play_index(i);
+        }
         let child = match &v.items {
             Items::Artists(a) => a.get(i).map(|a| {
                 (
@@ -307,11 +382,61 @@ impl AppState {
                     p.title.clone(),
                 )
             }),
+            Items::Tracks(t) if i < t.len() => {
+                let tracks = t.clone();
+                self.queue.replace(tracks, i);
+                return self.play_index(self.queue.current.unwrap_or(0));
+            }
             Items::Tracks(_) => None,
         };
         if let Some((kind, title)) = child {
             self.push(kind, title);
         }
+    }
+
+    /// `a` / `n`: queues the selected track directly, or fetches every track of an album, artist or playlist
+    fn add_selected(&mut self, mode: AddMode) {
+        let Some(v) = self.view() else { return };
+        let i = v.selected;
+        let source = match &v.items {
+            _ if matches!(v.kind, ListKind::Queue) => return,
+            Items::Tracks(t) => match t.get(i) {
+                Some(t) => return self.add_tracks(mode, vec![t.clone()]),
+                None => return,
+            },
+            Items::Albums(a) => a.get(i).map(|a| TrackSource::Album(a.rating_key.clone())),
+            Items::Artists(a) => a.get(i).map(|a| TrackSource::Artist(a.rating_key.clone())),
+            Items::Playlists(p) => p
+                .get(i)
+                .map(|p| TrackSource::Playlist(p.rating_key.clone())),
+        };
+        if let Some(source) = source
+            && self
+                .api
+                .try_send(ApiRequest::Tracks { source, mode })
+                .is_err()
+        {
+            self.error("busy, try again".into());
+        }
+    }
+
+    pub fn add_tracks(&mut self, mode: AddMode, tracks: Vec<Track>) {
+        let n = tracks.len();
+        match mode {
+            AddMode::Append => self.queue.append(tracks),
+            AddMode::Next => self.queue.play_next(tracks),
+        }
+        let what = if n == 1 {
+            "track".to_owned()
+        } else {
+            format!("{n} tracks")
+        };
+        let verb = match mode {
+            AddMode::Append => "added",
+            AddMode::Next => "playing next:",
+        };
+        self.info(format!("{verb} {what}"));
+        self.sync_next();
     }
 
     fn back(&mut self) {

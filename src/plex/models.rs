@@ -48,7 +48,6 @@ pub struct Track {
     pub rating_key: String,
     pub title: String,
     pub grandparent_title: String,
-    #[expect(dead_code, reason = "shown by the now-playing bar in M5")]
     pub parent_title: String,
     pub index: Option<u32>,
     pub duration_ms: Option<u64>,

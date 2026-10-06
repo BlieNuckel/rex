@@ -72,6 +72,11 @@ impl PlexClient {
         self.page(&path, &[], start, PAGE_SIZE)
     }
 
+    pub fn artist_tracks(&self, artist: &str, start: u32) -> Result<Page<Track>> {
+        let path = format!("/library/metadata/{artist}/allLeaves");
+        self.page(&path, &[], start, PAGE_SIZE)
+    }
+
     pub fn playlists(&self, start: u32) -> Result<Page<Playlist>> {
         self.page("/playlists", &[("playlistType", "audio")], start, PAGE_SIZE)
     }

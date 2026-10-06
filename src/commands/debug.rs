@@ -148,7 +148,7 @@ fn play(client: crate::plex::PlexClient, volume: f32, keys: &[String]) -> Result
                     break;
                 }
             }
-            Ok(PlayerEvent::Error(e)) => eprintln!("\nerror: {e}"),
+            Ok(PlayerEvent::Error { message, .. }) => eprintln!("\nerror: {message}"),
             Ok(PlayerEvent::BufferingChanged(b)) => eprintln!("\nbuffering: {b}"),
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
