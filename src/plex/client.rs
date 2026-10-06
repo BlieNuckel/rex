@@ -4,6 +4,14 @@ use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
 use ureq::{Agent, RequestBuilder};
 
+pub struct Stream {
+    /// offset of the first body byte; 0 when the server ignored the range
+    pub start: u64,
+    /// total size of the resource, if the server said
+    pub len: Option<u64>,
+    pub body: ureq::BodyReader<'static>,
+}
+
 pub struct PlexClient {
     agent: Agent,
     /// kept separate from `agent` so media downloads aren't cut off by its global timeout,
@@ -81,14 +89,30 @@ impl PlexClient {
             .with_context(|| format!("GET {}{path} [{start}+{size}]", self.base))
     }
 
-    /// Streaming GET for media downloads; returns `Content-Length` and the body reader
-    pub fn stream(&self, path: &str) -> Result<(Option<u64>, ureq::BodyReader<'static>)> {
-        let resp = self
-            .headers(self.stream_agent.get(format!("{}{path}", self.base)), &[])
+    /// streaming GET for media downloads starting at byte `from`
+    pub fn stream(&self, path: &str, from: u64) -> Result<Stream> {
+        let mut req = self.headers(self.stream_agent.get(format!("{}{path}", self.base)), &[]);
+        if from > 0 {
+            req = req.header("Range", format!("bytes={from}-"));
+        }
+        let resp = req
             .call()
-            .with_context(|| format!("GET {}{path}", self.base))?;
+            .with_context(|| format!("GET {}{path} from {from}", self.base))?;
+        let partial = resp.status().as_u16() == 206;
+        // "bytes 100-199/1000" -> 1000
+        let total = resp
+            .headers()
+            .get("content-range")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.rsplit('/').next())
+            .and_then(|t| t.parse().ok());
         let body = resp.into_body();
-        Ok((body.content_length(), body.into_reader()))
+        let start = if partial { from } else { 0 };
+        Ok(Stream {
+            start,
+            len: total.or_else(|| body.content_length().map(|n| start + n)),
+            body: body.into_reader(),
+        })
     }
 
     pub fn post<T: DeserializeOwned>(&self, path: &str, query: &[(&str, &str)]) -> Result<T> {
