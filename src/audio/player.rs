@@ -20,6 +20,7 @@ use crate::plex::models::Track;
 
 const POSITION_EVERY: Duration = Duration::from_millis(250);
 const IDLE_POLL: Duration = Duration::from_millis(20);
+const FILL_BUDGET: Duration = Duration::from_millis(50);
 
 #[derive(Debug)]
 pub enum PlayerCmd {
@@ -38,7 +39,12 @@ pub enum PlayerEvent {
     Position(u64),
     TrackStarted(Track),
     TrackEnded(String),
-    Error { rating_key: String, message: String },
+    Error {
+        rating_key: String,
+        message: String,
+    },
+    /// the player paused itself (the audio device is gone)
+    Paused,
     BufferingChanged(bool),
 }
 
@@ -82,6 +88,7 @@ pub fn spawn(
                 end_at: None,
                 playing: None,
                 paused: false,
+                volume,
                 last_position: Instant::now(),
             }
             .run(cmd_rx);
@@ -123,6 +130,7 @@ struct Player {
     end_at: Option<u64>,
     playing: Option<Playing>,
     paused: bool,
+    volume: f32,
     last_position: Instant,
 }
 
@@ -143,6 +151,9 @@ impl Player {
                 Err(true) => return,
                 Err(false) => {}
             }
+            if self.out.failed() && !self.paused {
+                self.recover_device();
+            }
             while let Ok((rk, res)) = self.opened_rx.try_recv() {
                 self.on_opened(rk, res);
             }
@@ -156,6 +167,42 @@ impl Player {
             let _ = self.events.try_send(ev);
         } else if self.events.send(ev).is_err() {
             debug!("player event receiver gone");
+        }
+    }
+
+    /// reopens the default device after the current one failed; pauses if that fails too
+    fn recover_device(&mut self) {
+        warn!("audio output failed, reopening the default device");
+        match Output::open(self.volume) {
+            Ok(out) => {
+                // frame indices restart at 0 on the new device, which picks up at the first
+                // frame the old one never received; whatever sat in its buffer is lost
+                let base = self.written;
+                let rate = self.out.rate as u64;
+                if let Some(p) = self.playing.as_mut() {
+                    p.offset_ms += base.saturating_sub(p.start) * 1000 / rate;
+                    p.start = p.start.saturating_sub(base);
+                }
+                for (at, _) in self.starts.iter_mut() {
+                    *at = at.saturating_sub(base);
+                }
+                if let Some(end) = self.end_at.as_mut() {
+                    *end = end.saturating_sub(base);
+                }
+                if out.rate != self.out.rate {
+                    self.resampler = None;
+                    self.ready.clear();
+                    self.ready_pos = 0;
+                }
+                self.written = 0;
+                self.out = out;
+            }
+            Err(e) => {
+                self.paused = true;
+                let rk = self.playing.as_ref().map(|p| p.track.rating_key.clone());
+                self.error(&rk.unwrap_or_default(), format!("audio device lost: {e:#}"));
+                self.emit(PlayerEvent::Paused);
+            }
         }
     }
 
@@ -203,7 +250,10 @@ impl Player {
                 self.next_pending = None;
                 self.out.suspend();
             }
-            PlayerCmd::SetVolume(v) => self.out.set_volume(v),
+            PlayerCmd::SetVolume(v) => {
+                self.volume = v;
+                self.out.set_volume(v);
+            }
             PlayerCmd::ClearNext => {
                 self.next = None;
                 self.next_pending = None;
@@ -329,7 +379,10 @@ impl Player {
         if self.paused {
             return;
         }
-        loop {
+        // on a slow link the ring buffer may never fill, so yield regularly to report
+        // track starts and positions and to take commands
+        let deadline = Instant::now() + FILL_BUDGET;
+        while Instant::now() < deadline {
             if self.ready_pos < self.ready.len() {
                 let n = self.out.write(&self.ready[self.ready_pos..]);
                 self.ready_pos += n;

@@ -112,6 +112,8 @@ pub struct AppState {
     pub(super) reporter: Reporter,
     /// now-playing changed in a way media widgets should hear about
     pub mpris_dirty: bool,
+    /// new server address found by rediscovery, saved to the config on exit
+    pub server_url: Option<String>,
     pub focus: Focus,
     pub section: usize,
     pub stack: Vec<View>,
@@ -141,6 +143,7 @@ impl AppState {
             quit_armed: None,
             reporter: Reporter::default(),
             mpris_dirty: false,
+            server_url: None,
             focus: Focus::List,
             section: 0,
             stack: Vec::new(),

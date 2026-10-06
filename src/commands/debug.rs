@@ -150,6 +150,10 @@ fn play(client: crate::plex::PlexClient, volume: f32, keys: &[String]) -> Result
             }
             Ok(PlayerEvent::Error { message, .. }) => eprintln!("\nerror: {message}"),
             Ok(PlayerEvent::BufferingChanged(b)) => eprintln!("\nbuffering: {b}"),
+            Ok(PlayerEvent::Paused) => {
+                paused = true;
+                eprintln!("\npaused by the player");
+            }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
         }

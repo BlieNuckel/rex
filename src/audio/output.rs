@@ -15,6 +15,7 @@ struct Shared {
     gain: AtomicU32,
     paused: AtomicBool,
     flush: AtomicBool,
+    failed: AtomicBool,
 }
 
 /// The device stream plus the producer
@@ -73,6 +74,11 @@ impl Output {
     /// Frames handed to the device since the stream opened, excluding flushed audio
     pub fn played(&self) -> u64 {
         self.shared.played.load(Acquire)
+    }
+
+    /// the device reported a fatal stream error (e.g. it was unplugged)
+    pub fn failed(&self) -> bool {
+        self.shared.failed.load(Relaxed)
     }
 
     /// Free space in samples
@@ -138,6 +144,7 @@ where
 {
     let channels = config.channels as usize;
     let sh = shared.clone();
+    let failed = shared.clone();
     let stream = device.build_output_stream(
         *config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
@@ -174,7 +181,10 @@ where
         },
         move |e: cpal::Error| match e.kind() {
             cpal::ErrorKind::Xrun | cpal::ErrorKind::RealtimeDenied => debug!("audio: {e}"),
-            _ => error!("audio stream error: {e}"),
+            _ => {
+                error!("audio stream error: {e}");
+                failed.failed.store(true, Relaxed);
+            }
         },
         None,
     )?;

@@ -7,7 +7,7 @@ pub mod state;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
@@ -16,15 +16,16 @@ use tracing::warn;
 use crate::audio::player::{self, PlayerCmd, PlayerEvent};
 use crate::config::{self, Config};
 use crate::mpris::Mpris;
-use crate::plex::PlexClient;
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Page, Playlist, Track};
+use crate::plex::{PlexClient, auth};
 use reporting::Report;
 use souvlaki::MediaControlEvent;
 use state::{AppState, ListKind};
 
 const API_WORKERS: usize = 2;
 const REPORT_TIMEOUT: Duration = Duration::from_secs(3);
+const RECONNECT_EVERY: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub enum AddMode {
@@ -82,6 +83,8 @@ pub enum AppEvent {
     Mpris(MediaControlEvent),
     /// SIGTERM, SIGINT or SIGHUP
     Signal,
+    /// the server answered again at this address after rediscovery
+    Reconnected(String),
 }
 
 pub fn run(client: Arc<PlexClient>, cfg: &mut Config) -> Result<()> {
@@ -93,7 +96,7 @@ pub fn run(client: Arc<PlexClient>, cfg: &mut Config) -> Result<()> {
     let (api_tx, api_rx) = sync_channel(16);
     let cache = config::dirs()?.cache_dir().join("stream");
     let (player_tx, player_rx) = player::spawn(client.clone(), cache, cfg.volume)?;
-    spawn_api_workers(client.clone(), section, api_rx, tx.clone())?;
+    spawn_api_workers(client.clone(), section, cfg.clone(), api_rx, tx.clone())?;
     spawn_forwarder(player_rx, tx.clone())?;
     #[cfg(unix)]
     spawn_signals(tx.clone())?;
@@ -110,6 +113,9 @@ pub fn run(client: Arc<PlexClient>, cfg: &mut Config) -> Result<()> {
         send_report(&client, &r);
     }
     cfg.volume = state.now.volume;
+    if let Some(url) = state.server_url.take() {
+        cfg.server_url = Some(url);
+    }
     cfg.save()?;
     result
 }
@@ -171,6 +177,10 @@ fn handle(state: &mut AppState, ev: AppEvent) {
         AppEvent::Player(ev) => state.on_player(ev),
         AppEvent::Mpris(ev) => state.on_mpris(ev),
         AppEvent::Signal => state.quit = true,
+        AppEvent::Reconnected(url) => {
+            state.info(format!("reconnected to the server at {url}"));
+            state.server_url = Some(url);
+        }
     }
 }
 
@@ -247,15 +257,94 @@ fn spawn_input(tx: SyncSender<AppEvent>) -> Result<()> {
     Ok(())
 }
 
+/// what an API worker needs to serve requests and to find the server again if it moves
+struct ApiContext {
+    client: Arc<PlexClient>,
+    section: String,
+    cfg: Config,
+    tx: SyncSender<AppEvent>,
+    /// last reconnect attempt and whether it worked, shared so workers don't stampede plex.tv
+    last_reconnect: Mutex<Option<(Instant, bool)>>,
+}
+
+impl ApiContext {
+    /// runs `f`; if the server was unreachable, rediscovers it (at most every 30 s) and retries once
+    fn call<T>(&self, f: impl Fn() -> Result<T>) -> Result<T> {
+        match f() {
+            Err(e) if crate::plex::client::unreachable(&e) && self.reconnect() => f(),
+            other => other,
+        }
+    }
+
+    fn reconnect(&self) -> bool {
+        let mut last = self
+            .last_reconnect
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some((at, ok)) = *last
+            && at.elapsed() < RECONNECT_EVERY
+        {
+            return ok;
+        }
+        let result = auth::reconnect(&self.client, &self.cfg);
+        *last = Some((Instant::now(), result.is_ok()));
+        match result {
+            Ok(url) => {
+                tracing::info!("reconnected to server at {url}");
+                let _ = self.tx.send(AppEvent::Reconnected(url));
+                true
+            }
+            Err(e) => {
+                warn!("reconnecting: {e:#}");
+                false
+            }
+        }
+    }
+
+    fn serve(&self, req: ApiRequest) -> Option<AppEvent> {
+        let (c, section) = (&*self.client, self.section.as_str());
+        let err = |e: anyhow::Error| format!("{e:#}");
+        Some(match req {
+            ApiRequest::Page { view, kind, start } => AppEvent::Page {
+                view,
+                start,
+                result: self
+                    .call(|| fetch_page(c, section, &kind, start))
+                    .map_err(err),
+            },
+            ApiRequest::Search { query } => AppEvent::Search {
+                result: self.call(|| c.search(section, &query)).map_err(err),
+                query,
+            },
+            ApiRequest::Tracks { source, mode } => AppEvent::Tracks {
+                mode,
+                result: self.call(|| fetch_tracks(c, &source)).map_err(err),
+            },
+            ApiRequest::Report(reports) => {
+                reports.iter().for_each(|r| send_report(c, r));
+                return None;
+            }
+        })
+    }
+}
+
 fn spawn_api_workers(
     client: Arc<PlexClient>,
     section: String,
+    cfg: Config,
     rx: Receiver<ApiRequest>,
     tx: SyncSender<AppEvent>,
 ) -> Result<()> {
     let rx = Arc::new(Mutex::new(rx));
+    let ctx = Arc::new(ApiContext {
+        client,
+        section,
+        cfg,
+        tx,
+        last_reconnect: Mutex::new(None),
+    });
     for i in 0..API_WORKERS {
-        let (client, section, rx, tx) = (client.clone(), section.clone(), rx.clone(), tx.clone());
+        let (ctx, rx) = (ctx.clone(), rx.clone());
         thread::Builder::new()
             .name(format!("api-{i}"))
             .spawn(move || {
@@ -265,29 +354,9 @@ fn spawn_api_workers(
                         Err(_) => break,
                     };
                     let Ok(req) = req else { break };
-                    let ev = match req {
-                        ApiRequest::Page { view, kind, start } => AppEvent::Page {
-                            view,
-                            start,
-                            result: fetch_page(&client, &section, &kind, start)
-                                .map_err(|e| format!("{e:#}")),
-                        },
-                        ApiRequest::Search { query } => AppEvent::Search {
-                            result: client
-                                .search(&section, &query)
-                                .map_err(|e| format!("{e:#}")),
-                            query,
-                        },
-                        ApiRequest::Report(reports) => {
-                            reports.iter().for_each(|r| send_report(&client, r));
-                            continue;
-                        }
-                        ApiRequest::Tracks { source, mode } => AppEvent::Tracks {
-                            mode,
-                            result: fetch_tracks(&client, &source).map_err(|e| format!("{e:#}")),
-                        },
-                    };
-                    if tx.send(ev).is_err() {
+                    if let Some(ev) = ctx.serve(req)
+                        && ctx.tx.send(ev).is_err()
+                    {
                         break;
                     }
                 }

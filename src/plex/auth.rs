@@ -115,7 +115,7 @@ pub fn connect(cfg: &mut Config) -> Result<PlexClient> {
 
 fn probe(uri: &str, expected_id: Option<&str>) -> bool {
     let c = PlexClient::new(uri, "", "rex-probe", PROBE_TIMEOUT);
-    match c.get::<Container<Identity>>("/identity", &[]) {
+    match c.get_once::<Container<Identity>>("/identity", &[]) {
         Ok(id) => expected_id.is_none_or(|e| e == id.mc.machine_identifier),
         Err(e) => {
             info!("probe failed: {e:#}");
@@ -124,8 +124,9 @@ fn probe(uri: &str, expected_id: Option<&str>) -> bool {
     }
 }
 
-fn discover(cfg: &mut Config, account: &str) -> Result<PlexClient> {
-    let tv = PlexClient::new(PLEX_TV, account, &cfg.client_identifier, API_TIMEOUT);
+/// servers on the account, optionally narrowed to one machine identifier
+fn servers(account: &str, client_id: &str, only: Option<&str>) -> Result<Vec<Resource>> {
+    let tv = PlexClient::new(PLEX_TV, account, client_id, API_TIMEOUT);
     let resources: Vec<Resource> = tv.get(
         "/api/v2/resources",
         &[("includeHttps", "1"), ("includeRelay", "1")],
@@ -133,17 +134,17 @@ fn discover(cfg: &mut Config, account: &str) -> Result<PlexClient> {
     let servers: Vec<Resource> = resources
         .into_iter()
         .filter(|r| r.provides.split(',').any(|p| p == "server"))
-        .filter(|r| {
-            cfg.server_id
-                .as_deref()
-                .is_none_or(|id| id == r.client_identifier)
-        })
+        .filter(|r| only.is_none_or(|id| id == r.client_identifier))
         .collect();
     if servers.is_empty() {
         bail!("no Plex Media Server found on this account");
     }
+    Ok(servers)
+}
 
-    let reachable: Vec<Option<&Connection>> = thread::scope(|s| {
+/// probes every connection of every server in parallel; best reachable connection per server
+fn reachable(servers: &[Resource]) -> Vec<Option<&Connection>> {
+    thread::scope(|s| {
         let handles: Vec<_> = servers
             .iter()
             .map(|srv| {
@@ -167,7 +168,30 @@ fn discover(cfg: &mut Config, account: &str) -> Result<PlexClient> {
                     .min_by_key(|c| c.rank())
             })
             .collect()
-    });
+    })
+}
+
+/// finds a working address for the saved server after it stopped answering, and switches `client` to it
+pub fn reconnect(client: &PlexClient, cfg: &Config) -> Result<String> {
+    let account = cfg.token.as_deref().context("not logged in")?;
+    let id = cfg
+        .server_id
+        .as_deref()
+        .context("no saved server to look up")?;
+    let servers = servers(account, &cfg.client_identifier, Some(id))?;
+    let uri = reachable(&servers)
+        .into_iter()
+        .flatten()
+        .next()
+        .map(|c| c.uri.clone())
+        .context("server unreachable on every known address")?;
+    client.set_base(&uri);
+    Ok(uri)
+}
+
+fn discover(cfg: &mut Config, account: &str) -> Result<PlexClient> {
+    let servers = servers(account, &cfg.client_identifier, cfg.server_id.as_deref())?;
+    let reachable = reachable(&servers);
 
     let mut choices = Vec::new();
     for (srv, conn) in servers.iter().zip(reachable) {
@@ -185,7 +209,7 @@ fn discover(cfg: &mut Config, account: &str) -> Result<PlexClient> {
             }
         };
         for sec in sections {
-            choices.push((srv, client.base.clone(), token.to_owned(), sec));
+            choices.push((srv, client.base(), token.to_owned(), sec));
         }
     }
     if choices.is_empty() {

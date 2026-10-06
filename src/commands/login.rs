@@ -17,7 +17,7 @@ impl Options {
         cfg.music_section = None;
         cfg.save()?;
         let client = auth::connect(cfg)?;
-        println!("Signed in. Using {}.", client.base);
+        println!("Signed in. Using {}.", client.base());
         Ok(ExitCode::SUCCESS)
     }
 }

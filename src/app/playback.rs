@@ -1,3 +1,4 @@
+use std::sync::mpsc::TrySendError;
 use std::time::{Duration, Instant};
 
 use souvlaki::{MediaControlEvent, SeekDirection};
@@ -15,9 +16,14 @@ const VOLUME_STEP: f32 = 0.05;
 const QUIT_CONFIRM: Duration = Duration::from_secs(3);
 
 impl AppState {
-    fn send(&self, cmd: PlayerCmd) {
-        if self.player.send(cmd).is_err() {
-            warn!("player thread is gone");
+    /// never blocks the UI: the player thread can be stuck in a stalled read for a while
+    fn send(&mut self, cmd: PlayerCmd) {
+        match self.player.try_send(cmd) {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => {
+                self.error("player is busy (waiting for the network)".into())
+            }
+            Err(TrySendError::Disconnected(_)) => warn!("player thread is gone"),
         }
     }
 
@@ -232,9 +238,26 @@ impl AppState {
                     .is_some_and(|(_, rk)| *rk == rating_key)
                 {
                     self.enqueued = None;
+                } else if self
+                    .now
+                    .track
+                    .as_ref()
+                    .is_some_and(|t| t.rating_key == rating_key)
+                {
+                    // the track is cut short; its coming TrackEnded must not count as a full play
+                    let reports = self.reporter.stopped();
+                    self.report(reports);
                 }
             }
             PlayerEvent::BufferingChanged(b) => self.now.buffering = b,
+            PlayerEvent::Paused => {
+                if self.now.track.is_some() && !self.now.paused {
+                    self.now.paused = true;
+                    let reports = self.reporter.set_paused(true, Instant::now());
+                    self.report(reports);
+                    self.mpris_dirty = true;
+                }
+            }
         }
     }
 
