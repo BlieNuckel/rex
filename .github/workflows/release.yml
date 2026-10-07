@@ -1,0 +1,139 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+env:
+  BIN_NAME: rex
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
+  package:
+    needs: check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            runner: ubuntu-22.04
+            arch: x86_64
+          - target: aarch64-unknown-linux-gnu
+            runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libraries
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deb,cargo-generate-rpm
+
+      - name: Build
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package .deb
+        run: cargo deb --no-build --no-strip --target ${{ matrix.target }}
+
+      - name: Package .rpm
+        run: cargo generate-rpm --target ${{ matrix.target }}
+
+      - name: Package .tar.gz
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          DIR="${BIN_NAME}-${VERSION}-${{ matrix.arch }}-linux"
+          mkdir -p "$DIR"
+          cp "target/${{ matrix.target }}/release/${BIN_NAME}" "$DIR/"
+          cp README* LICENSE* "$DIR/" 2>/dev/null || true
+          tar czf "$DIR.tar.gz" "$DIR"
+
+      - name: Collect packages
+        run: |
+          mkdir dist
+          cp target/${{ matrix.target }}/debian/*.deb dist/
+          cp target/${{ matrix.target }}/generate-rpm/*.rpm dist/
+          cp *.tar.gz dist/
+          ls -lh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.arch }}
+          path: dist/*
+
+  smoke-test:
+    needs: package
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:stable
+            install: apt-get update && apt-get install -y ./dist/*.deb
+          - image: ubuntu:24.04
+            install: apt-get update && apt-get install -y ./dist/*.deb
+          - image: fedora:latest
+            install: dnf install -y ./dist/*.rpm
+          - image: opensuse/tumbleweed
+            install: zypper --non-interactive install --allow-unsigned-rpm ./dist/*.rpm
+          - image: archlinux:latest
+            install: >-
+              pacman -Sy --noconfirm alsa-lib &&
+              tar xzf dist/*.tar.gz && install -m755 */"$BIN_NAME" /usr/local/bin/
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages-x86_64
+          path: dist
+      - name: Install
+        run: ${{ matrix.install }}
+      - name: Run
+        run: |
+          command -v "$BIN_NAME"
+          "$BIN_NAME" --version
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: smoke-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: packages-*
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: cd dist && sha256sum * > SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

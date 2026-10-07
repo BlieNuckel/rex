@@ -2,6 +2,8 @@
 name = "rex"
 version = "0.1.0"
 edition = "2024"
+description = "A TUI Plex media player written in Rust"
+license = "MIT"    
 
 [dependencies]
 anyhow = "1.0.104"
@@ -13,7 +15,7 @@ rtrb = "0.4.0"
 rubato = "5.0.1"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
-souvlaki = "0.8.3"
+souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
 symphonia = { version = "0.6.1", default-features = false, features = ["flac", "mp3", "aac", "alac", "isomp4", "vorbis", "ogg", "wav", "pcm", "id3v2", "opt-simd"] }
 toml = "1.1.6"
 tracing = "0.1.44"
@@ -32,3 +34,8 @@ lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[package.metadata.generate-rpm]
+assets = [
+  { source = "target/release/rex", dest = "/usr/bin/rex", mode = "755" },
+]
