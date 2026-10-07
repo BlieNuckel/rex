@@ -62,9 +62,16 @@ impl PlexClient {
         self.page(&path, &[("type", TYPE_ALBUM)], start, PAGE_SIZE)
     }
 
-    pub fn artist_albums(&self, artist: &str, start: u32) -> Result<Page<Album>> {
-        let path = format!("/library/metadata/{artist}/children");
-        self.page(&path, &[], start, PAGE_SIZE)
+    /// every release by `artist`, newest first; the artist's `/children` leaves out releases
+    /// Plex files as EPs, live albums or compilations
+    pub fn artist_albums(&self, section: &str, artist: &str, start: u32) -> Result<Page<Album>> {
+        let path = format!("/library/sections/{section}/all");
+        let query = [
+            ("type", TYPE_ALBUM),
+            ("artist.id", artist),
+            ("sort", "year:desc"),
+        ];
+        self.page(&path, &query, start, PAGE_SIZE)
     }
 
     pub fn album_tracks(&self, album: &str, start: u32) -> Result<Page<Track>> {

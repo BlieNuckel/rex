@@ -3,7 +3,13 @@ name = "rex"
 version = "1.0.1"
 edition = "2024"
 description = "A TUI Plex media player written in Rust"
-license = "MIT"    
+license = "MIT"
+authors = ["Adis Veletanlic <adisveletanlic@proton.me>"]
+
+[package.metadata.generate-rpm]
+assets = [
+  { source = "target/release/rex", dest = "/usr/bin/rex", mode = "755" },
+]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -35,7 +41,3 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-[package.metadata.generate-rpm]
-assets = [
-  { source = "target/release/rex", dest = "/usr/bin/rex", mode = "755" },
-]

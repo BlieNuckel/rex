@@ -72,7 +72,9 @@ impl Options {
             SC::Sections => client.sections()?.iter().for_each(|s| println!("{s:?}")),
             SC::Artists => print_all(|start| client.artists(&section, start))?,
             SC::Albums { artist: None } => print_all(|start| client.albums(&section, start))?,
-            SC::Albums { artist: Some(rk) } => print_all(|start| client.artist_albums(&rk, start))?,
+            SC::Albums { artist: Some(rk) } => {
+                print_all(|start| client.artist_albums(&section, &rk, start))?
+            }
             SC::Tracks { album } => print_all(|start| client.album_tracks(&album, start))?,
             SC::Playlists { playlist: None } => print_all(|start| client.playlists(start))?,
             SC::Playlists { playlist: Some(rk) } => {

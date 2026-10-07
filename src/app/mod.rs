@@ -370,7 +370,7 @@ fn fetch_page(c: &PlexClient, section: &str, kind: &ListKind, start: u32) -> Res
         ListKind::Artists => PageData::Artists(c.artists(section, start)?),
         ListKind::Albums => PageData::Albums(c.albums(section, start)?),
         ListKind::Playlists => PageData::Playlists(c.playlists(start)?),
-        ListKind::ArtistAlbums(rk) => PageData::Albums(c.artist_albums(rk, start)?),
+        ListKind::ArtistAlbums(rk) => PageData::Albums(c.artist_albums(section, rk, start)?),
         ListKind::AlbumTracks(rk) => PageData::Tracks(c.album_tracks(rk, start)?),
         ListKind::PlaylistTracks(rk) => PageData::Tracks(c.playlist_tracks(rk, start)?),
         ListKind::Search | ListKind::Queue => anyhow::bail!("{kind:?} is not paginated"),

@@ -53,6 +53,8 @@ pub struct Track {
     /// album art path, falling back to the track's own thumbnail
     pub thumb: String,
     pub index: Option<u32>,
+    /// disc number within the album
+    pub disc: Option<u32>,
     pub duration_ms: Option<u64>,
     pub part_key: String,
     pub container: Option<String>,
@@ -80,6 +82,7 @@ pub(super) struct RawItem {
     year: Option<u32>,
     leaf_count: Option<u32>,
     index: Option<u32>,
+    parent_index: Option<u32>,
     duration: Option<u64>,
     #[serde(rename = "Media")]
     media: Vec<RawMedia>,
@@ -145,6 +148,7 @@ impl From<RawItem> for Track {
                 r.parent_thumb
             },
             index: r.index,
+            disc: r.parent_index,
             duration_ms: r.duration,
             part_key: media
                 .parts

@@ -175,12 +175,17 @@ fn row(v: &View, i: usize) -> (String, String) {
                 .map_or(String::new(), |n| format!("{n} tracks"));
             (left, right)
         }
-        Items::Tracks(t) => {
-            let t = &t[i];
+        Items::Tracks(tracks) => {
+            let t = &tracks[i];
             let left = match v.kind {
                 ListKind::AlbumTracks(_) => {
                     let n = t.index.map_or(String::new(), |n| n.to_string());
-                    format!("{n:>2}  {}", t.title)
+                    if tracks.iter().any(|t| t.disc > Some(1)) {
+                        let disc = t.disc.unwrap_or(1);
+                        format!("{disc}-{n:0>2}  {}", t.title)
+                    } else {
+                        format!("{n:>2}  {}", t.title)
+                    }
                 }
                 _ => format!("{} — {}", t.title, t.grandparent_title),
             };
