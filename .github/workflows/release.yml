@@ -131,6 +131,15 @@ jobs:
           pattern: packages-*
           path: dist
           merge-multiple: true
+      - uses: actions/checkout@v4
+        with:
+          path: src
+      - name: Vendor crates
+        run: |
+          cd src
+          cargo vendor --locked ../vendor
+          cd ..
+          tar cJf "dist/${BIN_NAME}-${GITHUB_REF_NAME#v}-vendor.tar.xz" vendor
       - name: Checksums
         run: cd dist && sha256sum * > SHA256SUMS
       - uses: softprops/action-gh-release@v2
