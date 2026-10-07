@@ -1,4 +1,8 @@
-`rex` is a terminal music player for the music library on your Plex Media Server, built to stay small and fast
+`rex` is a terminal music player for the music library on your Plex Media Server, built to stay small and fast!
+
+## Installation
+
+There are a few packages available of this program for various linux flavours, just select one from the releases list.
 
 ## Usage
 
