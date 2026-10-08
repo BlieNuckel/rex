@@ -353,7 +353,15 @@ impl AppState {
             Action::Help => self.help = true,
             Action::DebugLine => self.debug_line = !self.debug_line,
             Action::Quit => self.request_quit(),
+            Action::Play => self.play(),
         }
+    }
+
+    fn play(&mut self) {
+        if self.focus == Focus::Sidebar {
+            return;
+        }
+        self.add_selected(AddMode::PlayFromStart);
     }
 
     fn move_by(&mut self, delta: isize) {
@@ -486,6 +494,10 @@ impl AppState {
         match mode {
             AddMode::Append => self.queue.append(tracks),
             AddMode::Next => self.queue.play_next(tracks),
+            AddMode::PlayFromStart => {
+                self.queue.replace(tracks, 0);
+                return self.play_index(0);
+            }
             AddMode::PlayFrom(rk) => {
                 let start = tracks.iter().position(|t| t.rating_key == rk).unwrap_or(0);
                 self.queue.replace(tracks, start);
