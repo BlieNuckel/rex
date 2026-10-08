@@ -35,7 +35,7 @@ impl MediaIntegration {
         let mut controls = match MediaControls::new(config) {
             Ok(c) => c,
             Err(e) => {
-                warn!("MPRIS unavailable: {e:?}");
+                warn!("Media Integration unavailable: {e:?}");
                 return None;
             }
         };
@@ -43,7 +43,7 @@ impl MediaIntegration {
             let _ = tx.send(AppEvent::MediaIntegration(ev));
         });
         if let Err(e) = attached {
-            warn!("MPRIS unavailable: {e:?}");
+            warn!("Media Integration unavailable: {e:?}");
             return None;
         }
         Some(Self { controls })
@@ -72,10 +72,10 @@ impl MediaIntegration {
 
     fn apply(&mut self, metadata: MediaMetadata, playback: MediaPlayback) {
         if let Err(e) = self.controls.set_metadata(metadata) {
-            warn!("MPRIS metadata: {e:?}");
+            warn!("Media Integration metadata: {e:?}");
         }
         if let Err(e) = self.controls.set_playback(playback) {
-            warn!("MPRIS playback: {e:?}");
+            warn!("Media Integration playback: {e:?}");
         }
     }
 }

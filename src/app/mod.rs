@@ -117,7 +117,7 @@ fn spawn_tui(
     rx: Receiver<AppEvent>,
     api_tx: SyncSender<ApiRequest>,
     player_tx: SyncSender<PlayerCmd>,
-    mut mpris: Option<MediaIntegration>,
+    mut media_integration: Option<MediaIntegration>,
     client: &PlexClient,
     cfg: &mut Config,
 ) -> Result<()> {
@@ -130,7 +130,13 @@ fn spawn_tui(
 
                 // ratatui::init installs a panic hook that restores the terminal
                 let mut terminal = ratatui::init();
-                let result = event_loop(&mut terminal, &mut state, &rx, mpris.as_mut(), client);
+                let result = event_loop(
+                    &mut terminal,
+                    &mut state,
+                    &rx,
+                    media_integration.as_mut(),
+                    client,
+                );
                 ratatui::restore();
 
                 shutdown(&mut state, &player_tx, client, cfg)?;
@@ -164,7 +170,7 @@ fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut AppState,
     rx: &Receiver<AppEvent>,
-    mut mpris: Option<&mut MediaIntegration>,
+    mut media_integration: Option<&mut MediaIntegration>,
     client: &PlexClient,
 ) -> Result<()> {
     loop {
@@ -187,9 +193,9 @@ fn event_loop(
             handle(state, ev);
         }
         state.expire_message();
-        if state.mpris_dirty {
-            state.mpris_dirty = false;
-            if let Some(m) = mpris.as_deref_mut() {
+        if state.media_integration_dirty {
+            state.media_integration_dirty = false;
+            if let Some(m) = media_integration.as_deref_mut() {
                 m.update(&state.now, client);
             }
         }
@@ -221,7 +227,7 @@ fn handle(state: &mut AppState, ev: AppEvent) {
         },
         AppEvent::Search { query, result } => state.on_search(query, result),
         AppEvent::Player(ev) => state.on_player(ev),
-        AppEvent::MediaIntegration(ev) => state.on_mpris(ev),
+        AppEvent::MediaIntegration(ev) => state.on_media_integration(ev),
         AppEvent::Signal => state.quit = true,
         AppEvent::Reconnected(url) => {
             state.info(format!("reconnected to the server at {url}"));

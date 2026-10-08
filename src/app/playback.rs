@@ -40,7 +40,7 @@ impl AppState {
         }
         let stopped = self.reporter.stopped();
         self.report(stopped);
-        self.mpris_dirty = true;
+        self.media_integration_dirty = true;
         let Some(e) = self.queue.entries.get(i) else {
             return;
         };
@@ -58,7 +58,7 @@ impl AppState {
     pub fn stop(&mut self) {
         let stopped = self.reporter.stopped();
         self.report(stopped);
-        self.mpris_dirty = true;
+        self.media_integration_dirty = true;
         self.send(PlayerCmd::Stop);
         self.now.track = None;
         self.now.position_ms = 0;
@@ -78,7 +78,7 @@ impl AppState {
         self.now.paused = !self.now.paused;
         let reports = self.reporter.set_paused(self.now.paused, Instant::now());
         self.report(reports);
-        self.mpris_dirty = true;
+        self.media_integration_dirty = true;
         self.send(if self.now.paused {
             PlayerCmd::Pause
         } else {
@@ -114,7 +114,7 @@ impl AppState {
             None => ms,
         };
         self.now.position_ms = target;
-        self.mpris_dirty = true;
+        self.media_integration_dirty = true;
         self.send(PlayerCmd::Seek(target));
     }
 
@@ -193,7 +193,7 @@ impl AppState {
                 }
                 let reports = self.reporter.started(&t, Instant::now());
                 self.report(reports);
-                self.mpris_dirty = true;
+                self.media_integration_dirty = true;
                 self.now.track = Some(t);
                 self.now.position_ms = 0;
                 self.now.buffering = false;
@@ -203,7 +203,7 @@ impl AppState {
             PlayerEvent::TrackEnded(_) => {
                 let reports = self.reporter.ended();
                 self.report(reports);
-                self.mpris_dirty = true;
+                self.media_integration_dirty = true;
                 // a pre-opened successor is about to report TrackStarted
                 if self.enqueued.is_some() {
                     return;
@@ -255,14 +255,14 @@ impl AppState {
                     self.now.paused = true;
                     let reports = self.reporter.set_paused(true, Instant::now());
                     self.report(reports);
-                    self.mpris_dirty = true;
+                    self.media_integration_dirty = true;
                 }
             }
         }
     }
 
     /// media keys and desktop widgets
-    pub fn on_mpris(&mut self, ev: MediaControlEvent) {
+    pub fn on_media_integration(&mut self, ev: MediaControlEvent) {
         let playing = self.now.track.is_some() && !self.now.paused;
         match ev {
             MediaControlEvent::Play if !playing => self.toggle_pause(),
