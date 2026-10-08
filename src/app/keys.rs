@@ -66,7 +66,7 @@ impl Action {
             Action::Help => "help",
             Action::DebugLine => "memory usage",
             Action::Quit => "quit",
-            Action::Play => "play albumt/artist/song",
+            Action::Play => "play now (replace queue)",
         }
     }
 }
