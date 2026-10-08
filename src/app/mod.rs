@@ -33,6 +33,7 @@ pub enum AddMode {
     Next,
     /// replace the queue with the fetched tracks and start at this rating key
     PlayFrom(String),
+    PlayFromStart,
 }
 
 pub enum TrackSource {

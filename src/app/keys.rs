@@ -9,6 +9,7 @@ pub enum Action {
     HalfDown,
     HalfUp,
     Open,
+    Play,
     Back,
     ToggleFocus,
     Jump(usize),
@@ -65,6 +66,7 @@ impl Action {
             Action::Help => "help",
             Action::DebugLine => "memory usage",
             Action::Quit => "quit",
+            Action::Play => "play albumt/artist/song",
         }
     }
 }
@@ -143,6 +145,7 @@ pub const BINDINGS: &[Binding] = &[
     key('?', Action::Help),
     code(KeyCode::F(12), Action::DebugLine),
     key('q', Action::Quit),
+    key('p', Action::Play),
 ];
 
 pub fn lookup(k: KeyEvent) -> Option<Action> {
