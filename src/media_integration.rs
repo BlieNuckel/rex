@@ -1,6 +1,10 @@
 use std::sync::mpsc::SyncSender;
+use std::thread::ScopedJoinHandle;
 use std::time::Duration;
 
+use anyhow::Result;
+#[cfg(target_os = "macos")]
+use core_foundation::runloop::{CFRunLoop, kCFRunLoopDefaultMode};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
 };
@@ -10,11 +14,26 @@ use crate::app::AppEvent;
 use crate::app::state::NowPlaying;
 use crate::plex::PlexClient;
 
-pub struct Mpris {
+pub struct MediaIntegration {
     controls: MediaControls,
 }
 
-impl Mpris {
+/// blocks the main thread on the run loop macOS uses for media key and Control Center commands
+#[cfg(target_os = "macos")]
+pub fn run_main_loop(tui: &ScopedJoinHandle<'_, Result<()>>) {
+    while !tui.is_finished() {
+        CFRunLoop::run_in_mode(
+            unsafe { kCFRunLoopDefaultMode },
+            Duration::from_secs(1),
+            false,
+        );
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn run_main_loop(_tui: &ScopedJoinHandle<'_, Result<()>>) {}
+
+impl MediaIntegration {
     /// registers on the session bus; returns `None` (after logging once) when D-Bus isn't usable
     pub fn start(tx: SyncSender<AppEvent>) -> Option<Self> {
         let config = PlatformConfig {
@@ -25,15 +44,15 @@ impl Mpris {
         let mut controls = match MediaControls::new(config) {
             Ok(c) => c,
             Err(e) => {
-                warn!("MPRIS unavailable: {e:?}");
+                warn!("Media Integration unavailable: {e:?}");
                 return None;
             }
         };
         let attached = controls.attach(move |ev: MediaControlEvent| {
-            let _ = tx.send(AppEvent::Mpris(ev));
+            let _ = tx.send(AppEvent::MediaIntegration(ev));
         });
         if let Err(e) = attached {
-            warn!("MPRIS unavailable: {e:?}");
+            warn!("Media Integration unavailable: {e:?}");
             return None;
         }
         Some(Self { controls })
@@ -62,10 +81,10 @@ impl Mpris {
 
     fn apply(&mut self, metadata: MediaMetadata, playback: MediaPlayback) {
         if let Err(e) = self.controls.set_metadata(metadata) {
-            warn!("MPRIS metadata: {e:?}");
+            warn!("Media Integration metadata: {e:?}");
         }
         if let Err(e) = self.controls.set_playback(playback) {
-            warn!("MPRIS playback: {e:?}");
+            warn!("Media Integration playback: {e:?}");
         }
     }
 }

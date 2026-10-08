@@ -6,7 +6,7 @@ mod app;
 mod audio;
 mod commands;
 mod config;
-mod mpris;
+mod media_integration;
 mod plex;
 mod ui;
 

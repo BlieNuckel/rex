@@ -15,7 +15,7 @@ use tracing::warn;
 
 use crate::audio::player::{self, PlayerCmd, PlayerEvent};
 use crate::config::{self, Config};
-use crate::mpris::Mpris;
+use crate::media_integration::{MediaIntegration, run_main_loop};
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Page, Playlist, Track};
 use crate::plex::{PlexClient, auth};
@@ -81,7 +81,7 @@ pub enum AppEvent {
         result: Result<SearchResults, String>,
     },
     Player(PlayerEvent),
-    Mpris(MediaControlEvent),
+    MediaIntegration(MediaControlEvent),
     /// SIGTERM, SIGINT or SIGHUP
     Signal,
     /// the server answered again at this address after rediscovery
@@ -106,18 +106,18 @@ pub fn run(client: Arc<PlexClient>, cfg: &mut Config) -> Result<()> {
     #[cfg(unix)]
     spawn_signals(tx.clone())?;
 
-    let mpris = Mpris::start(tx.clone());
+    let media_integration = MediaIntegration::start(tx.clone());
     spawn_input(tx)?;
 
-    spawn_tui(rx, api_tx, player_tx, mpris, &client, cfg)
+    spawn_tui(rx, api_tx, player_tx, media_integration, &client, cfg)
 }
 
-/// runs the ui on main thread
+/// runs the ui on a scoped thread while the main thread runs the platform run loop
 fn spawn_tui(
     rx: Receiver<AppEvent>,
     api_tx: SyncSender<ApiRequest>,
     player_tx: SyncSender<PlayerCmd>,
-    mut mpris: Option<Mpris>,
+    mut media_integration: Option<MediaIntegration>,
     client: &PlexClient,
     cfg: &mut Config,
 ) -> Result<()> {
@@ -130,12 +130,19 @@ fn spawn_tui(
 
                 // ratatui::init installs a panic hook that restores the terminal
                 let mut terminal = ratatui::init();
-                let result = event_loop(&mut terminal, &mut state, &rx, mpris.as_mut(), client);
+                let result = event_loop(
+                    &mut terminal,
+                    &mut state,
+                    &rx,
+                    media_integration.as_mut(),
+                    client,
+                );
                 ratatui::restore();
 
                 shutdown(&mut state, &player_tx, client, cfg)?;
                 result
             })?;
+        run_main_loop(&tui);
         tui.join().unwrap_or_else(|e| std::panic::resume_unwind(e))
     })
 }
@@ -162,7 +169,7 @@ fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut AppState,
     rx: &Receiver<AppEvent>,
-    mut mpris: Option<&mut Mpris>,
+    mut media_integration: Option<&mut MediaIntegration>,
     client: &PlexClient,
 ) -> Result<()> {
     loop {
@@ -179,9 +186,9 @@ fn event_loop(
             handle(state, ev);
         }
         state.expire_message();
-        if state.mpris_dirty {
-            state.mpris_dirty = false;
-            if let Some(m) = mpris.as_deref_mut() {
+        if state.media_integration_dirty {
+            state.media_integration_dirty = false;
+            if let Some(m) = media_integration.as_deref_mut() {
                 m.update(&state.now, client);
             }
         }
@@ -213,7 +220,7 @@ fn handle(state: &mut AppState, ev: AppEvent) {
         },
         AppEvent::Search { query, result } => state.on_search(query, result),
         AppEvent::Player(ev) => state.on_player(ev),
-        AppEvent::Mpris(ev) => state.on_mpris(ev),
+        AppEvent::MediaIntegration(ev) => state.on_media_integration(ev),
         AppEvent::Signal => state.quit = true,
         AppEvent::Reconnected(url) => {
             state.info(format!("reconnected to the server at {url}"));
