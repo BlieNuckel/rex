@@ -15,7 +15,7 @@ use tracing::warn;
 
 use crate::audio::player::{self, PlayerCmd, PlayerEvent};
 use crate::config::{self, Config};
-use crate::mpris::Mpris;
+use crate::media_controls::MediaIntegration;
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Page, Playlist, Track};
 use crate::plex::{PlexClient, auth};
@@ -81,7 +81,7 @@ pub enum AppEvent {
         result: Result<SearchResults, String>,
     },
     Player(PlayerEvent),
-    Mpris(MediaControlEvent),
+    MediaIntegration(MediaControlEvent),
     /// SIGTERM, SIGINT or SIGHUP
     Signal,
     /// the server answered again at this address after rediscovery
@@ -106,10 +106,10 @@ pub fn run(client: Arc<PlexClient>, cfg: &mut Config) -> Result<()> {
     #[cfg(unix)]
     spawn_signals(tx.clone())?;
 
-    let mpris = Mpris::start(tx.clone());
+    let media_integration = MediaIntegration::start(tx.clone());
     spawn_input(tx)?;
 
-    spawn_tui(rx, api_tx, player_tx, mpris, &client, cfg)
+    spawn_tui(rx, api_tx, player_tx, media_integration, &client, cfg)
 }
 
 /// runs the ui on main thread
@@ -117,7 +117,7 @@ fn spawn_tui(
     rx: Receiver<AppEvent>,
     api_tx: SyncSender<ApiRequest>,
     player_tx: SyncSender<PlayerCmd>,
-    mut mpris: Option<Mpris>,
+    mut mpris: Option<MediaIntegration>,
     client: &PlexClient,
     cfg: &mut Config,
 ) -> Result<()> {
@@ -158,16 +158,24 @@ fn shutdown(
     cfg.save()
 }
 
+const RUN_LOOP_TICK: Duration = Duration::from_millis(50);
+
 fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut AppState,
     rx: &Receiver<AppEvent>,
-    mut mpris: Option<&mut Mpris>,
+    mut mpris: Option<&mut MediaIntegration>,
     client: &PlexClient,
 ) -> Result<()> {
     loop {
+        crate::media_controls::pump();
         terminal.draw(|f| crate::ui::draw(f, state))?;
-        let first = match state.next_deadline() {
+        let wait = match state.next_deadline() {
+            Some(d) if cfg!(target_os = "macos") => Some(d.min(RUN_LOOP_TICK)),
+            None if cfg!(target_os = "macos") => Some(RUN_LOOP_TICK),
+            d => d,
+        };
+        let first = match wait {
             Some(d) => match rx.recv_timeout(d) {
                 Ok(ev) => Some(ev),
                 Err(RecvTimeoutError::Timeout) => None,
@@ -213,7 +221,7 @@ fn handle(state: &mut AppState, ev: AppEvent) {
         },
         AppEvent::Search { query, result } => state.on_search(query, result),
         AppEvent::Player(ev) => state.on_player(ev),
-        AppEvent::Mpris(ev) => state.on_mpris(ev),
+        AppEvent::MediaIntegration(ev) => state.on_mpris(ev),
         AppEvent::Signal => state.quit = true,
         AppEvent::Reconnected(url) => {
             state.info(format!("reconnected to the server at {url}"));

@@ -10,11 +10,21 @@ use crate::app::AppEvent;
 use crate::app::state::NowPlaying;
 use crate::plex::PlexClient;
 
-pub struct Mpris {
+pub struct MediaIntegration {
     controls: MediaControls,
 }
 
-impl Mpris {
+/// macOS delivers media key and Control Center commands on the main run loop, which a TUI never runs
+#[cfg(target_os = "macos")]
+pub fn pump() {
+    use core_foundation::runloop::{CFRunLoop, kCFRunLoopDefaultMode};
+    CFRunLoop::run_in_mode(unsafe { kCFRunLoopDefaultMode }, Duration::ZERO, true);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn pump() {}
+
+impl MediaIntegration {
     /// registers on the session bus; returns `None` (after logging once) when D-Bus isn't usable
     pub fn start(tx: SyncSender<AppEvent>) -> Option<Self> {
         let config = PlatformConfig {
@@ -30,7 +40,7 @@ impl Mpris {
             }
         };
         let attached = controls.attach(move |ev: MediaControlEvent| {
-            let _ = tx.send(AppEvent::Mpris(ev));
+            let _ = tx.send(AppEvent::MediaIntegration(ev));
         });
         if let Err(e) = attached {
             warn!("MPRIS unavailable: {e:?}");
