@@ -35,6 +35,17 @@ pub enum Action {
 }
 
 impl Action {
+    pub fn describe_short(self) -> &'static str {
+        match self {
+            Action::Play => "play now",
+            Action::Remove => "remove",
+            Action::MoveDown => "move down",
+            Action::MoveUp => "move up",
+            Action::Clear => "clear",
+            _ => self.describe(),
+        }
+    }
+
     pub fn describe(self) -> &'static str {
         match self {
             Action::Down => "move down",
