@@ -1,8 +1,10 @@
 use std::sync::mpsc::SyncSender;
+use std::thread::ScopedJoinHandle;
 use std::time::Duration;
 
+use anyhow::Result;
 #[cfg(target_os = "macos")]
-use core_foundation::runloop::CFRunLoop;
+use core_foundation::runloop::{CFRunLoop, kCFRunLoopDefaultMode};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
 };
@@ -18,25 +20,18 @@ pub struct MediaIntegration {
 
 /// blocks the main thread on the run loop macOS uses for media key and Control Center commands
 #[cfg(target_os = "macos")]
-pub fn run_main_loop() {
-    CFRunLoop::run_current();
+pub fn run_main_loop(tui: &ScopedJoinHandle<'_, Result<()>>) {
+    while !tui.is_finished() {
+        CFRunLoop::run_in_mode(
+            unsafe { kCFRunLoopDefaultMode },
+            Duration::from_secs(1),
+            false,
+        );
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn run_main_loop() {}
-
-/// stops `run_main_loop` on drop, so a failing or panicking UI thread can't leave the main thread blocked
-pub struct StopMainLoop;
-
-impl Drop for StopMainLoop {
-    #[cfg(target_os = "macos")]
-    fn drop(&mut self) {
-        CFRunLoop::get_main().stop();
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    fn drop(&mut self) {}
-}
+pub fn run_main_loop(_tui: &ScopedJoinHandle<'_, Result<()>>) {}
 
 impl MediaIntegration {
     /// registers on the session bus; returns `None` (after logging once) when D-Bus isn't usable

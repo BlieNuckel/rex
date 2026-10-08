@@ -15,7 +15,7 @@ use tracing::warn;
 
 use crate::audio::player::{self, PlayerCmd, PlayerEvent};
 use crate::config::{self, Config};
-use crate::media_integration::{MediaIntegration, StopMainLoop, run_main_loop};
+use crate::media_integration::{MediaIntegration, run_main_loop};
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Page, Playlist, Track};
 use crate::plex::{PlexClient, auth};
@@ -125,7 +125,6 @@ fn spawn_tui(
         let tui = thread::Builder::new()
             .name("tui".into())
             .spawn_scoped(s, move || {
-                let _stop = StopMainLoop;
                 let mut state = AppState::new(api_tx, player_tx.clone(), cfg.volume);
                 state.set_accent(cfg.accent_color.as_deref());
 
@@ -143,7 +142,7 @@ fn spawn_tui(
                 shutdown(&mut state, &player_tx, client, cfg)?;
                 result
             })?;
-        run_main_loop();
+        run_main_loop(&tui);
         tui.join().unwrap_or_else(|e| std::panic::resume_unwind(e))
     })
 }
