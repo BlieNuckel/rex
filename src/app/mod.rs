@@ -174,8 +174,7 @@ fn event_loop(
 ) -> Result<()> {
     loop {
         terminal.draw(|f| crate::ui::draw(f, state))?;
-        let wait = state.next_deadline();
-        let first = match wait {
+        let first = match state.next_deadline() {
             Some(d) => match rx.recv_timeout(d) {
                 Ok(ev) => Some(ev),
                 Err(RecvTimeoutError::Timeout) => None,
