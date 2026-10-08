@@ -7,6 +7,8 @@ use ratatui::widgets::Paragraph;
 use crate::app::keys::{Action, BINDINGS, key_name};
 use crate::app::state::{AppState, Focus, ListKind};
 
+const SEARCH_INPUT_KEYS: &[Action] = &[Action::SearchSubmit, Action::SearchCancel];
+
 const SIDEBAR_KEYS: &[Action] = &[Action::Open, Action::Search, Action::Help];
 
 const LIST_KEYS: &[Action] = &[
@@ -28,6 +30,9 @@ const QUEUE_KEYS: &[Action] = &[
 ];
 
 fn get_actions(s: &AppState) -> &[Action] {
+    if s.search_input.is_some() {
+        return SEARCH_INPUT_KEYS;
+    }
     match s.focus {
         Focus::Sidebar => SIDEBAR_KEYS,
         Focus::List => match s.view() {
