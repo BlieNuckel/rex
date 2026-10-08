@@ -15,7 +15,7 @@ use tracing::warn;
 
 use crate::audio::player::{self, PlayerCmd, PlayerEvent};
 use crate::config::{self, Config};
-use crate::media_integration::MediaIntegration;
+use crate::media_integration::{MediaIntegration, StopMainLoop, run_main_loop};
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Page, Playlist, Track};
 use crate::plex::{PlexClient, auth};
@@ -112,7 +112,7 @@ pub fn run(client: Arc<PlexClient>, cfg: &mut Config) -> Result<()> {
     spawn_tui(rx, api_tx, player_tx, media_integration, &client, cfg)
 }
 
-/// runs the ui on main thread
+/// runs the ui on a scoped thread while the main thread runs the platform run loop
 fn spawn_tui(
     rx: Receiver<AppEvent>,
     api_tx: SyncSender<ApiRequest>,
@@ -125,6 +125,7 @@ fn spawn_tui(
         let tui = thread::Builder::new()
             .name("tui".into())
             .spawn_scoped(s, move || {
+                let _stop = StopMainLoop;
                 let mut state = AppState::new(api_tx, player_tx.clone(), cfg.volume);
                 state.set_accent(cfg.accent_color.as_deref());
 
@@ -142,6 +143,7 @@ fn spawn_tui(
                 shutdown(&mut state, &player_tx, client, cfg)?;
                 result
             })?;
+        run_main_loop();
         tui.join().unwrap_or_else(|e| std::panic::resume_unwind(e))
     })
 }
@@ -164,8 +166,6 @@ fn shutdown(
     cfg.save()
 }
 
-const RUN_LOOP_TICK: Duration = Duration::from_millis(50);
-
 fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut AppState,
@@ -174,13 +174,8 @@ fn event_loop(
     client: &PlexClient,
 ) -> Result<()> {
     loop {
-        crate::media_integration::pump();
         terminal.draw(|f| crate::ui::draw(f, state))?;
-        let wait = match state.next_deadline() {
-            Some(d) if cfg!(target_os = "macos") => Some(d.min(RUN_LOOP_TICK)),
-            None if cfg!(target_os = "macos") => Some(RUN_LOOP_TICK),
-            d => d,
-        };
+        let wait = state.next_deadline();
         let first = match wait {
             Some(d) => match rx.recv_timeout(d) {
                 Ok(ev) => Some(ev),
