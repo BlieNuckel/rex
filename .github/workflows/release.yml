@@ -143,8 +143,9 @@ jobs:
           path: src
       - name: Vendor crates
         run: |
+          cargo install --locked cargo-vendor-filterer
           cd src
-          cargo vendor --locked ../vendor
+          cargo vendor-filterer --platform '*-unknown-linux-*' ../vendor
           cd ..
           tar cJf "dist/${BIN_NAME}-${VERSION}-vendor.tar.xz" vendor
       - name: Checksums
