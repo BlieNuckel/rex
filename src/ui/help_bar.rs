@@ -28,7 +28,7 @@ const QUEUE_KEYS: &[Action] = &[
 ];
 
 fn get_actions(s: &AppState) -> &[Action] {
-    return match s.focus {
+    match s.focus {
         Focus::Sidebar => SIDEBAR_KEYS,
         Focus::List => match s.view() {
             Some(v) => match v.kind {
@@ -37,7 +37,7 @@ fn get_actions(s: &AppState) -> &[Action] {
             },
             None => &[],
         },
-    };
+    }
 }
 
 pub fn draw_help_bar(f: &mut Frame, s: &AppState, area: Rect) {
