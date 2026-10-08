@@ -15,7 +15,7 @@ use tracing::warn;
 
 use crate::audio::player::{self, PlayerCmd, PlayerEvent};
 use crate::config::{self, Config};
-use crate::media_controls::MediaIntegration;
+use crate::media_integration::MediaIntegration;
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Page, Playlist, Track};
 use crate::plex::{PlexClient, auth};
@@ -174,7 +174,7 @@ fn event_loop(
     client: &PlexClient,
 ) -> Result<()> {
     loop {
-        crate::media_controls::pump();
+        crate::media_integration::pump();
         terminal.draw(|f| crate::ui::draw(f, state))?;
         let wait = match state.next_deadline() {
             Some(d) if cfg!(target_os = "macos") => Some(d.min(RUN_LOOP_TICK)),
