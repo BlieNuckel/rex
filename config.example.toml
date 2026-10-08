@@ -1,0 +1,26 @@
+# the device ID as Plex sees it, what shows
+# up under "now playin" dashboard as name
+client_identifier = "my-cool-pc"
+
+# the token retrieved from the plex.tv PIN
+# flow, only used to talk to plex.tv
+token = "plex.tv login token"
+
+# the base URL of the server connection rex
+# last used successfully
+server_url = "192.168.0.103"
+
+# the server's machineIdentifier, which plex.tv
+# calls clientIdentifier in the resource list
+server_id = "hostname"
+
+# this is what goes in X-Plex-Token header on
+# every reqyest to your connected server
+server_token = "X-Plex-Token"
+
+# the music library on your server. a server with only
+# one music library is chosen automatically
+music_section = "classical-music"
+
+# configured playback volume
+volume = 0.8
