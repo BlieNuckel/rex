@@ -204,21 +204,21 @@ fn artist_playing_now(now_playing: &NowPlaying, artist_title: &String) -> bool {
     now_playing
         .track
         .as_ref()
-        .is_some_and(|t| t.grandparent_title == artist_title.to_owned())
+        .is_some_and(|t| t.grandparent_title == *artist_title)
 }
 
 fn album_playing_now(now_playing: &NowPlaying, album_key: &String) -> bool {
     now_playing
         .track
         .as_ref()
-        .is_some_and(|t| t.parent_rating_key == album_key.to_owned())
+        .is_some_and(|t| t.parent_rating_key == *album_key)
 }
 
 fn track_playing_now(now_playing: &NowPlaying, track_key: &String) -> bool {
     now_playing
         .track
         .as_ref()
-        .is_some_and(|t| t.rating_key == track_key.to_owned())
+        .is_some_and(|t| t.rating_key == *track_key)
 }
 
 fn artist_row(a: &Artist) -> (String, String) {
