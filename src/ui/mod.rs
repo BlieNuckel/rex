@@ -1,7 +1,7 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Clear, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
@@ -282,18 +282,27 @@ fn draw_now_playing(f: &mut Frame, s: &AppState, area: Rect) {
         None => String::new(),
     };
     let bar_width = width.saturating_sub(left.width() + right.width());
-    let bar = match duration {
+    let bar_spans = match duration {
         Some(d) if d > 0 && now.track.is_some() && bar_width >= 5 => {
             let filled = ((now.position_ms.min(d) as f64 / d as f64) * bar_width as f64) as usize;
-            format!("{}{}", "━".repeat(filled), "─".repeat(bar_width - filled))
+            vec![
+                Span::styled("━".repeat(filled), Style::new().fg(s.accent)),
+                Span::raw("─".repeat(bar_width - filled)),
+            ]
         }
-        _ => String::new(),
+        _ => vec![],
     };
-    let second = fit(&format!("{left}{bar}"), right.trim_start(), width);
-    f.render_widget(
-        Paragraph::new(vec![Line::raw(first), Line::raw(second)]),
-        inner,
-    );
+    let right = right.trim_start();
+    let used = left.width() + bar_width + right.width();
+    let gap = " ".repeat(width.saturating_sub(used));
+
+    let mut spans = vec![Span::raw(left)];
+    spans.extend(bar_spans);
+    spans.push(Span::raw(gap));
+    spans.push(Span::raw(right));
+    let second = Line::from(spans);
+
+    f.render_widget(Paragraph::new(vec![Line::raw(first), second]), inner);
 }
 
 fn draw_help(f: &mut Frame) {
