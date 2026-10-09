@@ -150,7 +150,7 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
     let end = (v.offset + height).min(len);
     let lines: Vec<Line> = (v.offset..end)
         .map(|i| {
-            let is_playing = item_is_playing(v, i, &s.now);
+            let is_playing = item_is_playing(v, i, &s.now, &s.queue);
             let (left, right) = row(v, i, &s.queue);
             if let Items::Search(items) = &v.items
                 && let SearchItem::Header(h) = &items[i]
@@ -182,11 +182,14 @@ fn render_line_marker(v: &View, i: usize, is_playing: bool) -> &'static str {
     }
 }
 
-fn item_is_playing(v: &View, i: usize, now_playing: &NowPlaying) -> bool {
+fn item_is_playing(v: &View, i: usize, now_playing: &NowPlaying, queue: &Queue) -> bool {
     match &v.items {
         Items::Artists(a) => artist_playing_now(now_playing, &a[i].title),
         Items::Albums(a) => album_playing_now(now_playing, &a[i].rating_key),
-        Items::Tracks(ts) => track_playing_now(now_playing, &ts[i].rating_key),
+        Items::Tracks(ts) => match v.kind {
+            ListKind::Queue => track_playing_now(now_playing, &queue.entries[i].track.rating_key),
+            _ => track_playing_now(now_playing, &ts[i].rating_key),
+        },
         Items::Search(items) => match &items[i] {
             SearchItem::Header(_) => false,
             SearchItem::Artist(a) => artist_playing_now(now_playing, &a.title),
