@@ -3,7 +3,6 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph};
-use tracing::debug;
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::keys::{BINDINGS, key_name};
@@ -151,18 +150,19 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
     let end = (v.offset + height).min(len);
     let lines: Vec<Line> = (v.offset..end)
         .map(|i| {
-            let (left, right) = row(v, i, &s.now, &s.queue);
+            let is_playing = item_is_playing(v, i, &s.now);
+            let (left, right) = row(v, i, &s.queue);
             if let Items::Search(items) = &v.items
                 && let SearchItem::Header(h) = &items[i]
             {
                 return Line::raw(fit(h, "", width))
                     .style(Style::new().fg(s.accent).add_modifier(Modifier::BOLD));
             }
-            let marker = if i == v.selected { "> " } else { "  " };
+            let marker = render_line_marker(v, i, is_playing);
             let line = Line::raw(fit(&format!("{marker}{left}"), &right, width));
             if i == v.selected {
                 line.style(selected_style(focused, s.accent))
-            } else if is_queue && s.queue.current == Some(i) {
+            } else if is_playing {
                 line.style(Style::new().fg(s.accent))
             } else {
                 line
@@ -172,8 +172,29 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn highlight_playing(s: String) -> String {
-    format!("▶ {s}")
+fn render_line_marker(v: &View, i: usize, is_playing: bool) -> &'static str {
+    if is_playing {
+        "▶ "
+    } else if i == v.selected {
+        "> "
+    } else {
+        "  "
+    }
+}
+
+fn item_is_playing(v: &View, i: usize, now_playing: &NowPlaying) -> bool {
+    match &v.items {
+        Items::Artists(a) => artist_playing_now(now_playing, &a[i].title),
+        Items::Albums(a) => album_playing_now(now_playing, &a[i].rating_key),
+        Items::Tracks(ts) => track_playing_now(now_playing, &ts[i].rating_key),
+        Items::Search(items) => match &items[i] {
+            SearchItem::Header(_) => false,
+            SearchItem::Artist(a) => artist_playing_now(now_playing, &a.title),
+            SearchItem::Album(a) => album_playing_now(now_playing, &a.rating_key),
+            SearchItem::Track(t) => track_playing_now(now_playing, &t.rating_key),
+        },
+        _ => false,
+    }
 }
 
 fn artist_playing_now(now_playing: &NowPlaying, artist_title: &String) -> bool {
@@ -197,16 +218,12 @@ fn track_playing_now(now_playing: &NowPlaying, track_key: &String) -> bool {
         .is_some_and(|t| t.rating_key == track_key.to_owned())
 }
 
-fn artist_row(now_playing: &NowPlaying, a: &Artist) -> (String, String) {
+fn artist_row(a: &Artist) -> (String, String) {
     let left = a.title.clone();
-    if artist_playing_now(now_playing, &a.title) {
-        (highlight_playing(left), String::new())
-    } else {
-        (left, String::new())
-    }
+    (left, String::new())
 }
 
-fn album_row(list_kind: &ListKind, now_playing: &NowPlaying, a: &Album) -> (String, String) {
+fn album_row(list_kind: &ListKind, a: &Album) -> (String, String) {
     let year = a.year.map_or("    ".to_owned(), |y| y.to_string());
     let left = match list_kind {
         ListKind::ArtistAlbums(_) => format!("{year}  {}", a.title),
@@ -215,20 +232,10 @@ fn album_row(list_kind: &ListKind, now_playing: &NowPlaying, a: &Album) -> (Stri
     let right = a
         .leaf_count
         .map_or(String::new(), |n| format!("{n} tracks"));
-
-    if album_playing_now(now_playing, &a.rating_key) {
-        (highlight_playing(left), right)
-    } else {
-        (left, right)
-    }
+    (left, right)
 }
 
-fn track_row(
-    list_kind: &ListKind,
-    now_playing: &NowPlaying,
-    t: &Track,
-    multi_disc: bool,
-) -> (String, String) {
+fn track_row(list_kind: &ListKind, t: &Track, multi_disc: bool) -> (String, String) {
     let left = match list_kind {
         ListKind::AlbumTracks(_) => {
             let n = t.index.map_or(String::new(), |n| n.to_string());
@@ -243,36 +250,26 @@ fn track_row(
     };
     let right = t.duration_ms.map_or(String::new(), crate::fmt_ms);
 
-    if track_playing_now(now_playing, &t.rating_key) {
-        (highlight_playing(left), right)
-    } else {
-        (left, right)
-    }
+    (left, right)
 }
 
-fn row(v: &View, i: usize, now_playing: &NowPlaying, queue: &Queue) -> (String, String) {
+fn row(v: &View, i: usize, queue: &Queue) -> (String, String) {
     match &v.items {
-        Items::Artists(a) => artist_row(now_playing, &a[i]),
-        Items::Albums(a) => album_row(&v.kind, now_playing, &a[i]),
+        Items::Artists(a) => artist_row(&a[i]),
+        Items::Albums(a) => album_row(&v.kind, &a[i]),
         Items::Tracks(tracks) => match &v.kind {
             ListKind::Queue => track_row(
                 &v.kind,
-                now_playing,
                 &queue.entries[i].track,
                 tracks.iter().any(|t| t.disc > Some(1)),
             ),
-            _ => track_row(
-                &v.kind,
-                now_playing,
-                &tracks[i],
-                tracks.iter().any(|t| t.disc > Some(1)),
-            ),
+            _ => track_row(&v.kind, &tracks[i], tracks.iter().any(|t| t.disc > Some(1))),
         },
         Items::Search(items) => match &items[i] {
             SearchItem::Header(_) => (String::new(), String::new()),
-            SearchItem::Artist(a) => artist_row(now_playing, a),
-            SearchItem::Album(a) => album_row(&v.kind, now_playing, a),
-            SearchItem::Track(t) => track_row(&v.kind, now_playing, t, false),
+            SearchItem::Artist(a) => artist_row(a),
+            SearchItem::Album(a) => album_row(&v.kind, a),
+            SearchItem::Track(t) => track_row(&v.kind, t, false),
         },
         Items::Playlists(p) => {
             let p = &p[i];
