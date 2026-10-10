@@ -8,6 +8,7 @@ use super::keys::Action;
 use super::queue::Queue;
 use super::reporting::Reporter;
 use super::{AddMode, ApiRequest, PageData, TrackSource};
+use crate::app::state::PlayerState::Minimized;
 use crate::audio::player::PlayerCmd;
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Playlist, Track};
@@ -65,6 +66,11 @@ pub struct View {
     pub loading: bool,
     pub selected: usize,
     pub offset: usize,
+}
+
+pub enum PlayerState {
+    Minimized,
+    Maximized,
 }
 
 impl View {
@@ -127,6 +133,7 @@ pub struct AppState {
     /// text being typed after `/`, `Some` while the search prompt is open
     pub search_input: Option<String>,
     pub quit: bool,
+    pub player_state: PlayerState,
 }
 
 impl AppState {
@@ -157,6 +164,7 @@ impl AppState {
             list_height: 10,
             search_input: None,
             quit: false,
+            player_state: Minimized,
         };
         s.set_section(0);
         s
@@ -367,6 +375,12 @@ impl AppState {
             Action::DebugLine => self.debug_line = !self.debug_line,
             Action::Quit => self.request_quit(),
             Action::Play => self.play(),
+            Action::TogglePlayerState => {
+                self.player_state = match self.player_state {
+                    PlayerState::Maximized => PlayerState::Minimized,
+                    PlayerState::Minimized => PlayerState::Maximized,
+                }
+            }
         }
     }
 

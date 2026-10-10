@@ -32,6 +32,7 @@ pub enum Action {
     Help,
     DebugLine,
     Quit,
+    TogglePlayerState,
 }
 
 impl Action {
@@ -67,6 +68,7 @@ impl Action {
             Action::DebugLine => "memory usage",
             Action::Quit => "quit",
             Action::Play => "play now (replace queue)",
+            Action::TogglePlayerState => "toggle player maximized/minimized",
         }
     }
 }
@@ -146,6 +148,7 @@ pub const BINDINGS: &[Binding] = &[
     code(KeyCode::F(12), Action::DebugLine),
     key('q', Action::Quit),
     key('p', Action::Play),
+    key('m', Action::TogglePlayerState),
 ];
 
 pub fn lookup(k: KeyEvent) -> Option<Action> {
