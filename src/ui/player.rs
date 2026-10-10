@@ -1,5 +1,4 @@
 use ratatui::Frame;
-use ratatui::layout::VerticalAlignment::Center;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
