@@ -1,16 +1,29 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::queue::Repeat;
-use crate::app::state::{AppState, NowPlaying};
+use crate::app::state::PlayerState::{Maximized, Minimized};
+use crate::app::state::{AppState, NowPlaying, PlayerState};
 use crate::ui::string_formatting::fit;
 
+fn player_title(player_state: &PlayerState, accent: Color) -> Vec<Span<'static>> {
+    let action = match player_state {
+        Minimized => "maximize",
+        Maximized => "minimize",
+    };
+    vec![
+        Span::raw(" Player <"),
+        Span::styled("m", Style::new().fg(accent).add_modifier(Modifier::BOLD)),
+        Span::raw(format!(" {action}>")),
+    ]
+}
+
 pub fn draw_minimized_player(f: &mut Frame, s: &AppState, area: Rect) {
-    let block = Block::bordered();
+    let block = Block::bordered().title(player_title(&s.player_state, s.accent));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let width = inner.width as usize;
@@ -72,7 +85,7 @@ pub fn draw_minimized_player(f: &mut Frame, s: &AppState, area: Rect) {
 }
 
 pub fn draw_maximized_player(f: &mut Frame, s: &AppState, area: Rect) {
-    let block = Block::bordered().title(" Player ");
+    let block = Block::bordered().title(player_title(&s.player_state, s.accent));
     f.render_widget(&block, area);
 
     match &s.now.track {
