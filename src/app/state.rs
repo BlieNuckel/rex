@@ -8,7 +8,7 @@ use super::keys::Action;
 use super::queue::Queue;
 use super::reporting::Reporter;
 use super::{AddMode, ApiRequest, PageData, TrackSource};
-use crate::app::state::PlayerState::Minimized;
+use crate::app::state::PlayerState::{Maximized, Minimized};
 use crate::audio::player::PlayerCmd;
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Playlist, Track};
@@ -328,6 +328,34 @@ impl AppState {
         self.ensure_loaded();
     }
 
+    fn is_supported_action(&mut self, action: Action) -> bool {
+        let state_to_action = [(
+            || matches!(self.player_state, Maximized),
+            [
+                Action::PlayPause,
+                Action::Next,
+                Action::Previous,
+                Action::SeekForward,
+                Action::SeekBack,
+                Action::VolumeUp,
+                Action::VolumeDown,
+                Action::Shuffle,
+                Action::Repeat,
+                Action::Help,
+                Action::Quit,
+                Action::TogglePlayerState,
+            ],
+        )];
+
+        for (state_check, allowed_actions) in state_to_action {
+            if state_check() {
+                return allowed_actions.contains(&action);
+            }
+        }
+
+        return true;
+    }
+
     pub fn on_action(&mut self, action: Action) {
         if self.help {
             if matches!(action, Action::Help | Action::Quit | Action::Back) {
@@ -335,6 +363,11 @@ impl AppState {
             }
             return;
         }
+
+        if !self.is_supported_action(action) {
+            return;
+        }
+
         let half = (self.list_height / 2).max(1) as isize;
         match action {
             Action::Down => self.move_by(1),
