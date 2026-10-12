@@ -1,4 +1,5 @@
 pub mod keys;
+pub mod now_playing;
 mod playback;
 pub mod queue;
 mod reporting;
