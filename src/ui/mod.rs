@@ -24,6 +24,10 @@ pub fn draw(f: &mut Frame, s: &mut AppState) {
         Player => draw_maximized_player_layout(f, s),
         _ => draw_minimized_player_layout(f, s),
     }
+
+    if s.help {
+        draw_help(f);
+    }
 }
 
 fn draw_maximized_player_layout(f: &mut Frame, s: &mut AppState) {
@@ -58,9 +62,6 @@ fn draw_minimized_player_layout(f: &mut Frame, s: &mut AppState) {
     }
     draw_minimized_player(f, s, bar);
     draw_help_bar(f, s, help);
-    if s.help {
-        draw_help(f);
-    }
 }
 
 fn selected_style(focused: bool, accent: Color) -> Style {

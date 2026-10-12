@@ -70,22 +70,13 @@ pub const NAV_KEYS: &[Action] = &[
     Action::Search,
 ];
 
-pub const LIST_KEYS: &[Action] = &[
-    Action::Open,
-    Action::Play,
-    Action::Append,
-    Action::PlayNext,
-    Action::Search,
-    Action::Help,
-];
+pub const LIST_KEYS: &[Action] = &[Action::Open, Action::Play, Action::Append, Action::PlayNext];
 
 pub const QUEUE_KEYS: &[Action] = &[
     Action::Remove,
     Action::Clear,
     Action::MoveDown,
     Action::MoveUp,
-    Action::Search,
-    Action::Help,
 ];
 
 pub const MAXIMIZED_PLAYER_KEYS: &[Action] = &[];
