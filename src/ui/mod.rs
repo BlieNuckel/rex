@@ -6,9 +6,11 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::keys::{BINDINGS, key_name};
+use crate::app::now_playing::NowPlaying;
 use crate::app::queue::Queue;
 use crate::app::state::Focus::Player;
 use crate::app::state::{AppState, Focus, Items, ListKind, SECTIONS, SearchItem, View};
+use crate::plex::models::{Album, Artist, Track};
 use crate::ui::help_bar::draw_help_bar;
 use crate::ui::player::{draw_maximized_player, draw_minimized_player};
 use crate::ui::string_formatting::{fit, truncate_left};
@@ -154,22 +156,19 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
     let end = (v.offset + height).min(len);
     let lines: Vec<Line> = (v.offset..end)
         .map(|i| {
-            let (left, right) = if is_queue {
-                queue_row(&s.queue, i)
-            } else {
-                row(v, i)
-            };
+            let is_playing = item_is_playing(v, i, &s.now, &s.queue);
+            let (left, right) = row(v, i, &s.queue);
             if let Items::Search(items) = &v.items
                 && let SearchItem::Header(h) = &items[i]
             {
                 return Line::raw(fit(h, "", width))
                     .style(Style::new().fg(s.accent).add_modifier(Modifier::BOLD));
             }
-            let marker = if i == v.selected { "> " } else { "  " };
+            let marker = render_line_marker(v, i, is_playing);
             let line = Line::raw(fit(&format!("{marker}{left}"), &right, width));
             if i == v.selected {
                 line.style(selected_style(focused, s.accent))
-            } else if is_queue && s.queue.current == Some(i) {
+            } else if is_playing {
                 line.style(Style::new().fg(s.accent))
             } else {
                 line
@@ -179,48 +178,85 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
     f.render_widget(Paragraph::new(lines), inner);
 }
 
-fn row(v: &View, i: usize) -> (String, String) {
+fn render_line_marker(v: &View, i: usize, is_playing: bool) -> &'static str {
+    if is_playing {
+        "▶ "
+    } else if i == v.selected {
+        "> "
+    } else {
+        "  "
+    }
+}
+
+fn item_is_playing(v: &View, i: usize, now_playing: &NowPlaying, queue: &Queue) -> bool {
     match &v.items {
-        Items::Artists(a) => (a[i].title.clone(), String::new()),
-        Items::Albums(a) => {
-            let a = &a[i];
-            let year = a.year.map_or("    ".to_owned(), |y| y.to_string());
-            let left = match v.kind {
-                ListKind::ArtistAlbums(_) => format!("{year}  {}", a.title),
-                _ => format!("{year}  {} — {}", a.title, a.parent_title),
-            };
-            let right = a
-                .leaf_count
-                .map_or(String::new(), |n| format!("{n} tracks"));
-            (left, right)
+        Items::Artists(a) => now_playing.artist_playing_now(&a[i].title),
+        Items::Albums(a) => now_playing.album_playing_now(&a[i].rating_key),
+        Items::Tracks(ts) => match v.kind {
+            ListKind::Queue => {
+                let entry = &queue.entries[i];
+                now_playing.track_playing_now(&entry.track.rating_key) && queue.is_current(entry.id)
+            }
+            _ => now_playing.track_playing_now(&ts[i].rating_key),
+        },
+        Items::Search(items) => match &items[i] {
+            SearchItem::Header(_) => false,
+            SearchItem::Artist(a) => now_playing.artist_playing_now(&a.title),
+            SearchItem::Album(a) => now_playing.album_playing_now(&a.rating_key),
+            SearchItem::Track(t) => now_playing.track_playing_now(&t.rating_key),
+        },
+        _ => false,
+    }
+}
+
+fn artist_row(a: &Artist) -> (String, String) {
+    let left = a.title.clone();
+    (left, String::new())
+}
+
+fn album_row(list_kind: &ListKind, a: &Album) -> (String, String) {
+    let year = a.year.map_or("    ".to_owned(), |y| y.to_string());
+    let left = match list_kind {
+        ListKind::ArtistAlbums(_) => format!("{year}  {}", a.title),
+        _ => format!("{year}  {} — {}", a.title, a.parent_title),
+    };
+    let right = a
+        .leaf_count
+        .map_or(String::new(), |n| format!("{n} tracks"));
+    (left, right)
+}
+
+fn track_row(list_kind: &ListKind, t: &Track, multi_disc: bool) -> (String, String) {
+    let left = match list_kind {
+        ListKind::AlbumTracks(_) => {
+            let n = t.index.map_or(String::new(), |n| n.to_string());
+            if multi_disc {
+                let disc = t.disc.unwrap_or(1);
+                format!("{disc}-{n:0>2}  {}", t.title)
+            } else {
+                format!("{n:>2}  {}", t.title)
+            }
         }
-        Items::Tracks(tracks) => {
-            let t = &tracks[i];
-            let left = match v.kind {
-                ListKind::AlbumTracks(_) => {
-                    let n = t.index.map_or(String::new(), |n| n.to_string());
-                    if tracks.iter().any(|t| t.disc > Some(1)) {
-                        let disc = t.disc.unwrap_or(1);
-                        format!("{disc}-{n:0>2}  {}", t.title)
-                    } else {
-                        format!("{n:>2}  {}", t.title)
-                    }
-                }
-                _ => format!("{} — {}", t.title, t.grandparent_title),
-            };
-            (left, t.duration_ms.map_or(String::new(), crate::fmt_ms))
-        }
+        _ => format!("{} — {}", t.title, t.grandparent_title),
+    };
+    let right = t.duration_ms.map_or(String::new(), crate::fmt_ms);
+
+    (left, right)
+}
+
+fn row(v: &View, i: usize, queue: &Queue) -> (String, String) {
+    match &v.items {
+        Items::Artists(a) => artist_row(&a[i]),
+        Items::Albums(a) => album_row(&v.kind, &a[i]),
+        Items::Tracks(tracks) => match &v.kind {
+            ListKind::Queue => track_row(&v.kind, &queue.entries[i].track, false),
+            _ => track_row(&v.kind, &tracks[i], tracks.iter().any(|t| t.disc > Some(1))),
+        },
         Items::Search(items) => match &items[i] {
             SearchItem::Header(_) => (String::new(), String::new()),
-            SearchItem::Artist(a) => (a.title.clone(), String::new()),
-            SearchItem::Album(a) => {
-                let year = a.year.map_or(String::new(), |y| y.to_string());
-                (format!("{} — {}", a.title, a.parent_title), year)
-            }
-            SearchItem::Track(t) => (
-                format!("{} — {} · {}", t.title, t.grandparent_title, t.parent_title),
-                t.duration_ms.map_or(String::new(), crate::fmt_ms),
-            ),
+            SearchItem::Artist(a) => artist_row(a),
+            SearchItem::Album(a) => album_row(&v.kind, a),
+            SearchItem::Track(t) => track_row(&v.kind, t, false),
         },
         Items::Playlists(p) => {
             let p = &p[i];
@@ -230,13 +266,6 @@ fn row(v: &View, i: usize) -> (String, String) {
             (p.title.clone(), right.join(" · "))
         }
     }
-}
-
-fn queue_row(q: &Queue, i: usize) -> (String, String) {
-    let t = &q.entries[i].track;
-    let playing = if q.current == Some(i) { "▶ " } else { "  " };
-    let left = format!("{playing}{} — {}", t.title, t.grandparent_title);
-    (left, t.duration_ms.map_or(String::new(), crate::fmt_ms))
 }
 
 fn draw_help(f: &mut Frame) {
