@@ -5,7 +5,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::queue::Repeat;
+use crate::app::queue::{Queue, Repeat};
 use crate::app::state::PlayerState::{Maximized, Minimized};
 use crate::app::state::{AppState, NowPlaying, PlayerState};
 use crate::ui::string_formatting::fit;
@@ -105,19 +105,21 @@ fn draw_empty_state(f: &mut Frame, area: Rect) {
 
 fn draw_non_empty_state(f: &mut Frame, area: Rect, s: &AppState) {
     let now = &s.now;
-    let width = area.width as usize;
-    let area_centered = area.centered_horizontally(Constraint::Length(width as u16));
+    let area_centered = area.inner(Margin::new(10, 1));
 
-    let [cover_art, artist_info, progress_bar] = Layout::vertical([
+    let [cover_art, artist_info, progress_bar, actions] = Layout::vertical([
         Constraint::Min(20),
-        Constraint::Length(3),
+        Constraint::Length(2),
+        Constraint::Length(1),
         Constraint::Length(2),
     ])
+    .spacing(1)
     .areas(area_centered);
 
     draw_cover_art(f, cover_art);
     draw_info(f, artist_info, now);
     draw_progress_bar(f, progress_bar, now, s.accent);
+    draw_actions(f, actions, &s.now, &s.queue, s.accent)
 }
 
 fn draw_cover_art(f: &mut Frame, area: Rect) {
@@ -154,13 +156,9 @@ fn draw_info(f: &mut Frame, area: Rect, now: &NowPlaying) {
 }
 
 fn draw_progress_bar(f: &mut Frame, area: Rect, now: &NowPlaying, accent: Color) {
-    let padded_area = area.inner(Margin::new(10, 0));
-    let [time_stamp, _, bar] = Layout::horizontal([
-        Constraint::Length(11),
-        Constraint::Length(1),
-        Constraint::Min(10),
-    ])
-    .areas(padded_area);
+    let [time_stamp, bar] = Layout::horizontal([Constraint::Length(11), Constraint::Min(10)])
+        .spacing(1)
+        .areas(area);
 
     let width = bar.width as usize;
     let duration = now.track.as_ref().and_then(|t| t.duration_ms);
@@ -185,4 +183,43 @@ fn draw_progress_bar(f: &mut Frame, area: Rect, now: &NowPlaying, accent: Color)
     );
     f.render_widget(time, time_stamp);
     f.render_widget(Line::from(bar_spans), bar);
+}
+
+fn draw_actions(f: &mut Frame, area: Rect, now: &NowPlaying, queue: &Queue, accent: Color) {
+    let [shuffle, play_status, repeat] = Layout::horizontal([
+        Constraint::Length(1),
+        Constraint::Length(1),
+        Constraint::Min(1),
+    ])
+    .spacing(1)
+    .areas(area.centered_horizontally(Constraint::Max(6)));
+
+    let play_status_icon = match &now.track {
+        None => "",
+        Some(_) => {
+            if now.paused {
+                "‖"
+            } else {
+                "▶"
+            }
+        }
+    };
+
+    let (repeat_icon, repeat_active) = match queue.repeat {
+        Repeat::Off => ("↻", false),
+        Repeat::All => ("↻", true),
+        Repeat::One => ("↻1", true),
+    };
+
+    f.render_widget(action_styling("⇄", accent, queue.shuffle), shuffle);
+    f.render_widget(Line::raw(play_status_icon), play_status);
+    f.render_widget(action_styling(repeat_icon, accent, repeat_active), repeat);
+}
+
+fn action_styling(content: &str, accent: Color, active: bool) -> Line<'_> {
+    if active {
+        Line::styled(content, Style::new().fg(accent).bold())
+    } else {
+        Line::raw(content)
+    }
 }
