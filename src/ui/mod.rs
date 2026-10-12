@@ -11,7 +11,7 @@ use crate::app::state::Focus::Player;
 use crate::app::state::{AppState, Focus, Items, ListKind, SECTIONS, SearchItem, View};
 use crate::ui::help_bar::draw_help_bar;
 use crate::ui::player::{draw_maximized_player, draw_minimized_player};
-use crate::ui::string_formatting::{fit, truncate, truncate_left};
+use crate::ui::string_formatting::{fit, truncate_left};
 
 mod help_bar;
 mod player;
@@ -20,48 +20,28 @@ mod string_formatting;
 const SIDEBAR_WIDTH: u16 = 19;
 
 pub fn draw(f: &mut Frame, s: &mut AppState) {
+    let [main, help_bar] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(f.area());
+
     match s.focus {
-        Player => draw_maximized_player_layout(f, s),
-        _ => draw_minimized_player_layout(f, s),
+        Player => draw_maximized_player(f, s, main),
+        _ => draw_minimized_player_layout(f, s, main),
     }
 
+    draw_help_bar(f, s, help_bar);
     if s.help {
         draw_help(f);
     }
 }
 
-fn draw_maximized_player_layout(f: &mut Frame, s: &mut AppState) {
-    let [main, help] =
-        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(f.area());
-    draw_maximized_player(f, s, main);
-    draw_help_bar(f, s, help);
-}
-
-fn draw_minimized_player_layout(f: &mut Frame, s: &mut AppState) {
-    let msg_height = u16::from(s.message.is_some());
-    let [main, msg, bar, help] = Layout::vertical([
-        Constraint::Min(3),
-        Constraint::Length(msg_height),
-        Constraint::Length(4),
-        Constraint::Length(1),
-    ])
-    .areas(f.area());
+fn draw_minimized_player_layout(f: &mut Frame, s: &mut AppState, area: Rect) {
+    let [main, bar] = Layout::vertical([Constraint::Min(3), Constraint::Length(4)]).areas(area);
     let [side, list] =
         Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(10)]).areas(main);
 
     draw_sidebar(f, s, side);
     draw_list(f, s, list);
-    if let Some(m) = &s.message {
-        let text = truncate(&m.text, msg.width as usize);
-        let style = if m.error {
-            Style::new().fg(Color::Red)
-        } else {
-            Style::new()
-        };
-        f.render_widget(Paragraph::new(text).style(style), msg);
-    }
     draw_minimized_player(f, s, bar);
-    draw_help_bar(f, s, help);
 }
 
 fn selected_style(focused: bool, accent: Color) -> Style {
