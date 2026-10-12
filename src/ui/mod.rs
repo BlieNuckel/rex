@@ -188,7 +188,10 @@ fn item_is_playing(v: &View, i: usize, now_playing: &NowPlaying, queue: &Queue) 
         Items::Artists(a) => now_playing.artist_playing_now(&a[i].title),
         Items::Albums(a) => now_playing.album_playing_now(&a[i].rating_key),
         Items::Tracks(ts) => match v.kind {
-            ListKind::Queue => now_playing.track_playing_now(&queue.entries[i].track.rating_key),
+            ListKind::Queue => {
+                let entry = &queue.entries[i];
+                now_playing.track_playing_now(&entry.track.rating_key) && queue.is_current(entry.id)
+            }
             _ => now_playing.track_playing_now(&ts[i].rating_key),
         },
         Items::Search(items) => match &items[i] {
