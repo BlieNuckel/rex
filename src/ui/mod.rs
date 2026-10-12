@@ -7,7 +7,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::keys::{BINDINGS, key_name};
 use crate::app::queue::Queue;
-use crate::app::state::PlayerState::{Maximized, Minimized};
+use crate::app::state::Focus::Player;
 use crate::app::state::{AppState, Focus, Items, ListKind, SECTIONS, SearchItem, View};
 use crate::ui::help_bar::draw_help_bar;
 use crate::ui::player::{draw_maximized_player, draw_minimized_player};
@@ -20,9 +20,9 @@ mod string_formatting;
 const SIDEBAR_WIDTH: u16 = 19;
 
 pub fn draw(f: &mut Frame, s: &mut AppState) {
-    match s.player_state {
-        Minimized => draw_minimized_player_layout(f, s),
-        Maximized => draw_maximized_player_layout(f, s),
+    match s.focus {
+        Player => draw_maximized_player_layout(f, s),
+        _ => draw_minimized_player_layout(f, s),
     }
 }
 

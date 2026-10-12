@@ -8,7 +8,11 @@ use super::keys::Action;
 use super::queue::Queue;
 use super::reporting::Reporter;
 use super::{AddMode, ApiRequest, PageData, TrackSource};
-use crate::app::state::PlayerState::{Maximized, Minimized};
+use crate::app::keys::{
+    GLOBAL_PLAYER_KEYS, HELP_KEYS, LIST_KEYS, MAXIMIZED_PLAYER_KEYS, NAV_KEYS, QUEUE_KEYS,
+    SEARCH_INPUT_KEYS, SIDEBAR_KEYS,
+};
+use crate::app::state::Focus::Player;
 use crate::audio::player::PlayerCmd;
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Playlist, Track};
@@ -68,11 +72,6 @@ pub struct View {
     pub offset: usize,
 }
 
-pub enum PlayerState {
-    Minimized,
-    Maximized,
-}
-
 impl View {
     fn fetchable(&self) -> bool {
         !matches!(self.kind, ListKind::Search | ListKind::Queue)
@@ -102,6 +101,7 @@ pub struct Message {
 pub enum Focus {
     Sidebar,
     List,
+    Player,
 }
 
 pub struct AppState {
@@ -133,7 +133,6 @@ pub struct AppState {
     /// text being typed after `/`, `Some` while the search prompt is open
     pub search_input: Option<String>,
     pub quit: bool,
-    pub player_state: PlayerState,
 }
 
 impl AppState {
@@ -164,7 +163,6 @@ impl AppState {
             list_height: 10,
             search_input: None,
             quit: false,
-            player_state: Minimized,
         };
         s.set_section(0);
         s
@@ -328,31 +326,25 @@ impl AppState {
         self.ensure_loaded();
     }
 
-    fn is_supported_action(&mut self, action: Action) -> bool {
-        let state_to_action = [(
-            || matches!(self.player_state, Maximized),
-            [
-                Action::PlayPause,
-                Action::Next,
-                Action::Previous,
-                Action::SeekForward,
-                Action::SeekBack,
-                Action::VolumeUp,
-                Action::VolumeDown,
-                Action::Shuffle,
-                Action::Repeat,
-                Action::Help,
-                Action::Quit,
-                Action::TogglePlayerState,
-            ],
-        )];
-
-        for (state_check, allowed_actions) in state_to_action {
-            if state_check() {
-                return allowed_actions.contains(&action);
-            }
+    pub fn get_supported_actions(&self) -> Vec<Action> {
+        if self.search_input.is_some() {
+            return SEARCH_INPUT_KEYS.to_vec();
         }
-        true
+        if self.help {
+            return HELP_KEYS.to_vec();
+        }
+
+        match self.focus {
+            Focus::Sidebar => [SIDEBAR_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS].concat(),
+            Focus::List => match self.view() {
+                Some(v) => match v.kind {
+                    ListKind::Queue => [QUEUE_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS].concat(),
+                    _ => [LIST_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS].concat(),
+                },
+                None => vec![],
+            },
+            Focus::Player => [MAXIMIZED_PLAYER_KEYS, GLOBAL_PLAYER_KEYS].concat(),
+        }
     }
 
     pub fn on_action(&mut self, action: Action) {
@@ -363,7 +355,7 @@ impl AppState {
             return;
         }
 
-        if !self.is_supported_action(action) {
+        if !self.get_supported_actions().contains(&action) {
             return;
         }
 
@@ -381,6 +373,7 @@ impl AppState {
                 self.focus = match self.focus {
                     Focus::Sidebar => Focus::List,
                     Focus::List => Focus::Sidebar,
+                    Focus::Player => Focus::Player,
                 }
             }
             Action::Jump(i) => {
@@ -407,10 +400,11 @@ impl AppState {
             Action::DebugLine => self.debug_line = !self.debug_line,
             Action::Quit => self.request_quit(),
             Action::Play => self.play(),
-            Action::TogglePlayerState => {
-                self.player_state = match self.player_state {
-                    PlayerState::Maximized => PlayerState::Minimized,
-                    PlayerState::Minimized => PlayerState::Maximized,
+            Action::TogglePlayerFocus => {
+                self.focus = if matches!(self.focus, Player) {
+                    Focus::List
+                } else {
+                    Focus::Player
                 }
             }
             // routed through on_search_key while the prompt is open, never via lookup
@@ -445,6 +439,7 @@ impl AppState {
                 }
                 self.ensure_loaded();
             }
+            Focus::Player => return,
         }
     }
 

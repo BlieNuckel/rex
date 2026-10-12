@@ -6,14 +6,14 @@ use ratatui::widgets::{Block, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::queue::{Queue, Repeat};
-use crate::app::state::PlayerState::{Maximized, Minimized};
-use crate::app::state::{AppState, NowPlaying, PlayerState};
+use crate::app::state::Focus::Player;
+use crate::app::state::{AppState, Focus, NowPlaying};
 use crate::ui::string_formatting::fit;
 
-fn player_title(player_state: &PlayerState, accent: Color) -> Vec<Span<'static>> {
-    let action = match player_state {
-        Minimized => "maximize",
-        Maximized => "minimize",
+fn player_title(focus: &Focus, accent: Color) -> Vec<Span<'static>> {
+    let action = match focus {
+        Player => "minimize",
+        _ => "maximize",
     };
     vec![
         Span::raw(" Player <"),
@@ -23,7 +23,7 @@ fn player_title(player_state: &PlayerState, accent: Color) -> Vec<Span<'static>>
 }
 
 pub fn draw_minimized_player(f: &mut Frame, s: &AppState, area: Rect) {
-    let block = Block::bordered().title(player_title(&s.player_state, s.accent));
+    let block = Block::bordered().title(player_title(&s.focus, s.accent));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let width = inner.width as usize;
@@ -85,7 +85,7 @@ pub fn draw_minimized_player(f: &mut Frame, s: &AppState, area: Rect) {
 }
 
 pub fn draw_maximized_player(f: &mut Frame, s: &AppState, area: Rect) {
-    let block = Block::bordered().title(player_title(&s.player_state, s.accent));
+    let block = Block::bordered().title(player_title(&s.focus, s.accent));
     f.render_widget(&block, area);
 
     match &s.now.track {

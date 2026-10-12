@@ -32,10 +32,69 @@ pub enum Action {
     Help,
     DebugLine,
     Quit,
-    TogglePlayerState,
+    TogglePlayerFocus,
     SearchSubmit,
     SearchCancel,
 }
+
+pub const GLOBAL_PLAYER_KEYS: &[Action] = &[
+    Action::PlayPause,
+    Action::Next,
+    Action::Previous,
+    Action::SeekForward,
+    Action::SeekBack,
+    Action::VolumeUp,
+    Action::VolumeDown,
+    Action::Shuffle,
+    Action::Repeat,
+    Action::Help,
+    Action::Quit,
+    Action::TogglePlayerFocus,
+];
+
+pub const NAV_KEYS: &[Action] = &[
+    Action::Down,
+    Action::Up,
+    Action::Top,
+    Action::Bottom,
+    Action::HalfDown,
+    Action::HalfUp,
+    Action::Open,
+    Action::Back,
+    Action::ToggleFocus,
+    Action::Jump(0),
+    Action::Jump(1),
+    Action::Jump(2),
+    Action::Jump(3),
+    Action::Jump(4),
+    Action::Search,
+];
+
+pub const LIST_KEYS: &[Action] = &[
+    Action::Open,
+    Action::Play,
+    Action::Append,
+    Action::PlayNext,
+    Action::Search,
+    Action::Help,
+];
+
+pub const QUEUE_KEYS: &[Action] = &[
+    Action::Remove,
+    Action::Clear,
+    Action::MoveDown,
+    Action::MoveUp,
+    Action::Search,
+    Action::Help,
+];
+
+pub const MAXIMIZED_PLAYER_KEYS: &[Action] = &[];
+
+pub const SEARCH_INPUT_KEYS: &[Action] = &[Action::SearchSubmit, Action::SearchCancel];
+
+pub const SIDEBAR_KEYS: &[Action] = &[Action::Open, Action::Search, Action::Help];
+
+pub const HELP_KEYS: &[Action] = &[Action::Help, Action::Quit, Action::Back];
 
 impl Action {
     pub fn describe_short(self) -> &'static str {
@@ -81,7 +140,7 @@ impl Action {
             Action::DebugLine => "memory usage",
             Action::Quit => "quit",
             Action::Play => "play now (replace queue)",
-            Action::TogglePlayerState => "toggle player maximized/minimized",
+            Action::TogglePlayerFocus => "toggle player maximized/minimized",
             Action::SearchSubmit => "search",
             Action::SearchCancel => "cancel",
         }
@@ -97,6 +156,7 @@ pub struct Binding {
     pub keys: &'static [KeyBinding],
     pub action: Action,
     pub show_in_help: bool,
+    pub show_in_help_bar: bool,
 }
 
 const fn bind(action: Action, keys: &'static [KeyBinding]) -> Binding {
@@ -104,11 +164,13 @@ const fn bind(action: Action, keys: &'static [KeyBinding]) -> Binding {
         keys,
         action,
         show_in_help: true,
+        show_in_help_bar: false,
     }
 }
 
-const fn hidden(mut binding: Binding) -> Binding {
+const fn help_bar_only(mut binding: Binding) -> Binding {
     binding.show_in_help = false;
+    binding.show_in_help_bar = true;
     binding
 }
 
@@ -154,7 +216,7 @@ pub const BINDINGS: &[Binding] = &[
     bind(Action::Jump(2), &[key('3')]),
     bind(Action::Jump(3), &[key('4')]),
     bind(Action::Jump(4), &[key('5')]),
-    hidden(bind(Action::Search, &[key('/')])),
+    help_bar_only(bind(Action::Search, &[key('/')])),
     bind(Action::PlayPause, &[key(' ')]),
     bind(Action::Next, &[key('>')]),
     bind(Action::Previous, &[key('<')]),
@@ -164,19 +226,19 @@ pub const BINDINGS: &[Binding] = &[
     bind(Action::VolumeDown, &[key('-')]),
     bind(Action::Shuffle, &[key('s')]),
     bind(Action::Repeat, &[key('r')]),
-    hidden(bind(Action::Append, &[key('a')])),
-    hidden(bind(Action::PlayNext, &[key('n')])),
-    hidden(bind(Action::Remove, &[key('d')])),
-    hidden(bind(Action::MoveDown, &[key('J')])),
-    hidden(bind(Action::MoveUp, &[key('K')])),
-    hidden(bind(Action::Clear, &[key('D')])),
-    hidden(bind(Action::Help, &[key('?')])),
+    help_bar_only(bind(Action::Append, &[key('a')])),
+    help_bar_only(bind(Action::PlayNext, &[key('n')])),
+    help_bar_only(bind(Action::Remove, &[key('d')])),
+    help_bar_only(bind(Action::MoveDown, &[key('J')])),
+    help_bar_only(bind(Action::MoveUp, &[key('K')])),
+    help_bar_only(bind(Action::Clear, &[key('D')])),
+    help_bar_only(bind(Action::Help, &[key('?')])),
     bind(Action::DebugLine, &[code(KeyCode::F(12))]),
     bind(Action::Quit, &[key('q')]),
-    hidden(bind(Action::Play, &[key('p')])),
-    hidden(bind(Action::SearchSubmit, &[code(KeyCode::Enter)])),
-    hidden(bind(Action::SearchCancel, &[code(KeyCode::Esc)])),
-    bind(Action::TogglePlayerState, &[key('m')]),
+    help_bar_only(bind(Action::Play, &[key('p')])),
+    help_bar_only(bind(Action::SearchSubmit, &[code(KeyCode::Enter)])),
+    help_bar_only(bind(Action::SearchCancel, &[code(KeyCode::Esc)])),
+    bind(Action::TogglePlayerFocus, &[key('m')]),
 ];
 
 pub fn lookup(k: KeyEvent) -> Option<Action> {
