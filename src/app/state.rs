@@ -414,6 +414,8 @@ impl AppState {
                     PlayerState::Minimized => PlayerState::Maximized,
                 }
             }
+            // routed through on_search_key while the prompt is open, never via lookup
+            Action::SearchSubmit | Action::SearchCancel => {}
         }
     }
 

@@ -1,3 +1,5 @@
+mod help_bar;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -14,6 +16,7 @@ use crate::ui::string_formatting::{fit, truncate, truncate_left};
 
 mod player;
 mod string_formatting;
+use crate::ui::help_bar::draw_help_bar;
 
 const SIDEBAR_WIDTH: u16 = 19;
 
@@ -25,16 +28,19 @@ pub fn draw(f: &mut Frame, s: &mut AppState) {
 }
 
 fn draw_maximized_player_layout(f: &mut Frame, s: &mut AppState) {
-    let [main] = Layout::vertical([Constraint::Fill(1)]).areas(f.area());
+    let [main, help] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(f.area());
     draw_maximized_player(f, s, main);
+    draw_help_bar(f, s, help);
 }
 
 fn draw_minimized_player_layout(f: &mut Frame, s: &mut AppState) {
     let msg_height = u16::from(s.message.is_some());
-    let [main, msg, bar] = Layout::vertical([
+    let [main, msg, bar, help] = Layout::vertical([
         Constraint::Min(3),
         Constraint::Length(msg_height),
         Constraint::Length(4),
+        Constraint::Length(1),
     ])
     .areas(f.area());
     let [side, list] =
@@ -52,6 +58,7 @@ fn draw_minimized_player_layout(f: &mut Frame, s: &mut AppState) {
         f.render_widget(Paragraph::new(text).style(style), msg);
     }
     draw_minimized_player(f, s, bar);
+    draw_help_bar(f, s, help);
     if s.help {
         draw_help(f);
     }
