@@ -111,7 +111,7 @@ fn draw_non_empty_state(f: &mut Frame, area: Rect, s: &AppState) {
         Constraint::Min(20),
         Constraint::Length(2),
         Constraint::Length(1),
-        Constraint::Length(2),
+        Constraint::Length(1),
     ])
     .spacing(1)
     .areas(area_centered);
@@ -186,13 +186,14 @@ fn draw_progress_bar(f: &mut Frame, area: Rect, now: &NowPlaying, accent: Color)
 }
 
 fn draw_actions(f: &mut Frame, area: Rect, now: &NowPlaying, queue: &Queue, accent: Color) {
+    let centered_area = area.centered_horizontally(Constraint::Max(6));
     let [shuffle, play_status, repeat] = Layout::horizontal([
         Constraint::Length(1),
         Constraint::Length(1),
         Constraint::Min(1),
     ])
     .spacing(1)
-    .areas(area.centered_horizontally(Constraint::Max(6)));
+    .areas(centered_area);
 
     let play_status_icon = match &now.track {
         None => "",
@@ -214,6 +215,14 @@ fn draw_actions(f: &mut Frame, area: Rect, now: &NowPlaying, queue: &Queue, acce
     f.render_widget(action_styling("⇄", accent, queue.shuffle), shuffle);
     f.render_widget(Line::raw(play_status_icon), play_status);
     f.render_widget(action_styling(repeat_icon, accent, repeat_active), repeat);
+
+    let volume = format!("♪ {:.0}%", now.volume * 100.0);
+    let volume_width = volume.width() as u16;
+    if area.right().saturating_sub(volume_width) >= centered_area.right() + 2 {
+        let [_, volume_area] =
+            Layout::horizontal([Constraint::Fill(1), Constraint::Length(volume_width)]).areas(area);
+        f.render_widget(Line::raw(volume).right_aligned(), volume_area);
+    }
 }
 
 fn action_styling(content: &str, accent: Color, active: bool) -> Line<'_> {
