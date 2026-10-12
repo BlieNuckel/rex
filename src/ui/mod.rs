@@ -1,5 +1,3 @@
-mod help_bar;
-
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -11,12 +9,13 @@ use crate::app::keys::{BINDINGS, key_name};
 use crate::app::queue::Queue;
 use crate::app::state::PlayerState::{Maximized, Minimized};
 use crate::app::state::{AppState, Focus, Items, ListKind, SECTIONS, SearchItem, View};
+use crate::ui::help_bar::draw_help_bar;
 use crate::ui::player::{draw_maximized_player, draw_minimized_player};
 use crate::ui::string_formatting::{fit, truncate, truncate_left};
 
+mod help_bar;
 mod player;
 mod string_formatting;
-use crate::ui::help_bar::draw_help_bar;
 
 const SIDEBAR_WIDTH: u16 = 19;
 
