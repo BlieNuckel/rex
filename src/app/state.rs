@@ -439,7 +439,7 @@ impl AppState {
                 }
                 self.ensure_loaded();
             }
-            Focus::Player => return,
+            Focus::Player => (),
         }
     }
 
