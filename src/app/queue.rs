@@ -66,6 +66,10 @@ impl Queue {
         self.entries.iter().position(|e| e.id == id)
     }
 
+    pub fn is_current(&self, id: u64) -> bool {
+        self.current.is_some_and(|i| self.entries[i].id == id)
+    }
+
     fn make(&mut self, tracks: Vec<Track>) -> Vec<Entry> {
         tracks
             .into_iter()

@@ -13,6 +13,7 @@ use crate::app::keys::{
     GLOBAL_PLAYER_KEYS, HELP_KEYS, LIST_KEYS, MAXIMIZED_PLAYER_KEYS, NAV_KEYS, QUEUE_KEYS,
     SEARCH_INPUT_KEYS, SIDEBAR_KEYS,
 };
+use crate::app::now_playing::NowPlaying;
 use crate::app::state::Focus::Player;
 use crate::audio::player::PlayerCmd;
 use crate::plex::api::SearchResults;
@@ -81,15 +82,6 @@ impl View {
     fn complete(&self) -> bool {
         !self.fetchable() || self.total.is_some_and(|t| self.items.len() >= t as usize)
     }
-}
-
-#[derive(Default)]
-pub struct NowPlaying {
-    pub track: Option<Track>,
-    pub position_ms: u64,
-    pub paused: bool,
-    pub buffering: bool,
-    pub volume: f32,
 }
 
 /// cover art for the thumb of the track it was fetched for

@@ -7,9 +7,10 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Widget};
 use unicode_width::UnicodeWidthStr;
 
+use crate::app::now_playing::NowPlaying;
 use crate::app::queue::{Queue, Repeat};
 use crate::app::state::Focus::Player;
-use crate::app::state::{AppState, Focus, NowPlaying};
+use crate::app::state::{AppState, Focus};
 use crate::ui::string_formatting::fit;
 
 fn player_title(focus: &Focus, accent: Color) -> Vec<Span<'static>> {

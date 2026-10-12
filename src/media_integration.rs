@@ -11,7 +11,7 @@ use souvlaki::{
 use tracing::warn;
 
 use crate::app::AppEvent;
-use crate::app::state::NowPlaying;
+use crate::app::now_playing::NowPlaying;
 use crate::plex::PlexClient;
 
 pub struct MediaIntegration {
