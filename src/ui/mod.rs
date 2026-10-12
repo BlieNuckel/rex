@@ -241,11 +241,7 @@ fn row(v: &View, i: usize, queue: &Queue) -> (String, String) {
         Items::Artists(a) => artist_row(&a[i]),
         Items::Albums(a) => album_row(&v.kind, &a[i]),
         Items::Tracks(tracks) => match &v.kind {
-            ListKind::Queue => track_row(
-                &v.kind,
-                &queue.entries[i].track,
-                tracks.iter().any(|t| t.disc > Some(1)),
-            ),
+            ListKind::Queue => track_row(&v.kind, &queue.entries[i].track, false),
             _ => track_row(&v.kind, &tracks[i], tracks.iter().any(|t| t.disc > Some(1))),
         },
         Items::Search(items) => match &items[i] {
