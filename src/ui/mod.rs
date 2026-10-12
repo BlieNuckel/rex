@@ -1,49 +1,49 @@
-mod help_bar;
-
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph};
-use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+use unicode_width::UnicodeWidthStr;
 
 use crate::app::keys::{BINDINGS, key_name};
 use crate::app::now_playing::NowPlaying;
-use crate::app::queue::{Queue, Repeat};
+use crate::app::queue::Queue;
+use crate::app::state::Focus::Player;
 use crate::app::state::{AppState, Focus, Items, ListKind, SECTIONS, SearchItem, View};
 use crate::plex::models::{Album, Artist, Track};
 use crate::ui::help_bar::draw_help_bar;
+use crate::ui::player::{draw_maximized_player, draw_minimized_player};
+use crate::ui::string_formatting::{fit, truncate_left};
+
+mod help_bar;
+mod player;
+mod string_formatting;
 
 const SIDEBAR_WIDTH: u16 = 19;
 
 pub fn draw(f: &mut Frame, s: &mut AppState) {
-    let msg_height = u16::from(s.message.is_some());
-    let [main, msg, bar, help] = Layout::vertical([
-        Constraint::Min(3),
-        Constraint::Length(msg_height),
-        Constraint::Length(4),
-        Constraint::Length(1),
-    ])
-    .areas(f.area());
+    let [main, help_bar] =
+        Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(f.area());
+
+    match s.focus {
+        Player => draw_maximized_player(f, s, main),
+        _ => draw_minimized_player_layout(f, s, main),
+    }
+
+    draw_help_bar(f, s, help_bar);
+    if s.help {
+        draw_help(f);
+    }
+}
+
+fn draw_minimized_player_layout(f: &mut Frame, s: &mut AppState, area: Rect) {
+    let [main, bar] = Layout::vertical([Constraint::Min(3), Constraint::Length(4)]).areas(area);
     let [side, list] =
         Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(10)]).areas(main);
 
     draw_sidebar(f, s, side);
     draw_list(f, s, list);
-    if let Some(m) = &s.message {
-        let text = truncate(&m.text, msg.width as usize);
-        let style = if m.error {
-            Style::new().fg(Color::Red)
-        } else {
-            Style::new()
-        };
-        f.render_widget(Paragraph::new(text).style(style), msg);
-    }
-    draw_now_playing(f, s, bar);
-    draw_help_bar(f, s, help);
-    if s.help {
-        draw_help(f);
-    }
+    draw_minimized_player(f, s, bar);
 }
 
 fn selected_style(focused: bool, accent: Color) -> Style {
@@ -268,68 +268,6 @@ fn row(v: &View, i: usize, queue: &Queue) -> (String, String) {
     }
 }
 
-fn draw_now_playing(f: &mut Frame, s: &AppState, area: Rect) {
-    let block = Block::bordered();
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-    let width = inner.width as usize;
-    let now = &s.now;
-
-    let first = match &now.track {
-        None => fit("■ not playing", "", width),
-        Some(t) => {
-            let icon = if now.paused { "‖" } else { "▶" };
-            let mut text = format!("{icon} {}", t.title);
-            for part in [&t.grandparent_title, &t.parent_title] {
-                if !part.is_empty() {
-                    text.push_str(if text.contains(" — ") {
-                        " · "
-                    } else {
-                        " — "
-                    });
-                    text.push_str(part);
-                }
-            }
-            fit(&text, if now.buffering { "buffering…" } else { "" }, width)
-        }
-    };
-
-    let mut right = String::new();
-    let duration = now.track.as_ref().and_then(|t| t.duration_ms);
-    if let Some(d) = duration {
-        right.push_str(&format!(" {}", crate::fmt_ms(d)));
-    }
-    right.push_str(&format!("  vol {:.0}%", now.volume * 100.0));
-    if s.queue.shuffle {
-        right.push_str(" ⇄");
-    }
-    match s.queue.repeat {
-        Repeat::Off => {}
-        Repeat::All => right.push_str(" ↻"),
-        Repeat::One => right.push_str(" ↻1"),
-    }
-    if s.debug_line {
-        right.push_str(&format!("  rss {:.1} MB", crate::rss_kb() as f64 / 1024.0));
-    }
-    let left = match now.track {
-        Some(_) => format!("{} ", crate::fmt_ms(now.position_ms)),
-        None => String::new(),
-    };
-    let bar_width = width.saturating_sub(left.width() + right.width());
-    let bar = match duration {
-        Some(d) if d > 0 && now.track.is_some() && bar_width >= 5 => {
-            let filled = ((now.position_ms.min(d) as f64 / d as f64) * bar_width as f64) as usize;
-            format!("{}{}", "━".repeat(filled), "─".repeat(bar_width - filled))
-        }
-        _ => String::new(),
-    };
-    let second = fit(&format!("{left}{bar}"), right.trim_start(), width);
-    f.render_widget(
-        Paragraph::new(vec![Line::raw(first), Line::raw(second)]),
-        inner,
-    );
-}
-
 fn draw_help(f: &mut Frame) {
     let mut groups: Vec<(&str, Vec<String>)> = Vec::new();
     for b in BINDINGS {
@@ -377,53 +315,4 @@ fn draw_help(f: &mut Frame) {
     f.render_widget(Clear, popup);
     f.render_widget(block, popup);
     f.render_widget(Paragraph::new(lines), inner);
-}
-
-/// `left` truncated with an ellipsis, then `right` flush against the right edge
-fn fit(left: &str, right: &str, width: usize) -> String {
-    let rw = right.width();
-    if rw + 2 > width {
-        return truncate(left, width);
-    }
-    let l = truncate(left, width - rw - 1);
-    let pad = width - l.width() - rw;
-    format!("{l}{}{right}", " ".repeat(pad))
-}
-
-fn truncate(s: &str, width: usize) -> String {
-    if s.width() <= width {
-        return s.to_owned();
-    }
-    let mut out = String::new();
-    let mut w = 0;
-    for c in s.chars() {
-        let cw = c.width().unwrap_or(0);
-        if w + cw + 1 > width {
-            break;
-        }
-        out.push(c);
-        w += cw;
-    }
-    if width > 0 {
-        out.push('…');
-    }
-    out
-}
-
-fn truncate_left(s: &str, width: usize) -> String {
-    if s.width() <= width {
-        return s.to_owned();
-    }
-    let mut out: Vec<char> = Vec::new();
-    let mut w = 0;
-    for c in s.chars().rev() {
-        let cw = c.width().unwrap_or(0);
-        if w + cw + 1 > width {
-            break;
-        }
-        out.push(c);
-        w += cw;
-    }
-    out.push('…');
-    out.iter().rev().collect()
 }

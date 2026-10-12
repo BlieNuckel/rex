@@ -1,57 +1,38 @@
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::app::keys::{Action, BINDINGS, key_name};
-use crate::app::state::{AppState, Focus, ListKind};
+use crate::app::keys::{BINDINGS, key_name};
+use crate::app::state::AppState;
+use crate::ui::string_formatting::truncate;
 
-const SEARCH_INPUT_KEYS: &[Action] = &[Action::SearchSubmit, Action::SearchCancel];
-
-const SIDEBAR_KEYS: &[Action] = &[Action::Open, Action::Search, Action::Help];
-
-const LIST_KEYS: &[Action] = &[
-    Action::Open,
-    Action::Play,
-    Action::Append,
-    Action::PlayNext,
-    Action::Search,
-    Action::Help,
-];
-
-const QUEUE_KEYS: &[Action] = &[
-    Action::Remove,
-    Action::Clear,
-    Action::MoveDown,
-    Action::MoveUp,
-    Action::Search,
-    Action::Help,
-];
-
-fn get_actions(s: &AppState) -> &[Action] {
-    if s.search_input.is_some() {
-        return SEARCH_INPUT_KEYS;
-    }
-    match s.focus {
-        Focus::Sidebar => SIDEBAR_KEYS,
-        Focus::List => match s.view() {
-            Some(v) => match v.kind {
-                ListKind::Queue => QUEUE_KEYS,
-                _ => LIST_KEYS,
-            },
-            None => &[],
-        },
+fn draw_message(f: &mut Frame, s: &AppState, area: Rect) {
+    if let Some(m) = &s.message {
+        let text = truncate(&m.text, area.width as usize);
+        let style = if m.error {
+            Style::new().fg(Color::Red)
+        } else {
+            Style::new()
+        };
+        f.render_widget(Paragraph::new(text).style(style), area);
     }
 }
 
 pub fn draw_help_bar(f: &mut Frame, s: &AppState, area: Rect) {
+    if s.message.is_some() {
+        return draw_message(f, s, area);
+    }
+
     let key_style = Style::new().fg(s.accent).add_modifier(Modifier::BOLD);
-    let spans: Vec<Span> = get_actions(s)
+    let spans: Vec<Span> = s
+        .get_supported_actions()
         .iter()
         .filter_map(|&action| {
             BINDINGS
                 .iter()
+                .filter(|b| b.show_in_help_bar)
                 .find(|b| b.action == action)
                 .map(|b| (b, action))
         })

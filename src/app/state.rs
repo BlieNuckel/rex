@@ -8,7 +8,12 @@ use super::keys::Action;
 use super::queue::Queue;
 use super::reporting::Reporter;
 use super::{AddMode, ApiRequest, PageData, TrackSource};
+use crate::app::keys::{
+    GLOBAL_PLAYER_KEYS, HELP_KEYS, LIST_KEYS, MAXIMIZED_PLAYER_KEYS, NAV_KEYS, QUEUE_KEYS,
+    SEARCH_INPUT_KEYS, SIDEBAR_KEYS,
+};
 use crate::app::now_playing::NowPlaying;
+use crate::app::state::Focus::Player;
 use crate::audio::player::PlayerCmd;
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Playlist, Track};
@@ -88,6 +93,7 @@ pub struct Message {
 pub enum Focus {
     Sidebar,
     List,
+    Player,
 }
 
 pub struct AppState {
@@ -312,6 +318,27 @@ impl AppState {
         self.ensure_loaded();
     }
 
+    pub fn get_supported_actions(&self) -> Vec<Action> {
+        if self.search_input.is_some() {
+            return SEARCH_INPUT_KEYS.to_vec();
+        }
+        if self.help {
+            return HELP_KEYS.to_vec();
+        }
+
+        match self.focus {
+            Focus::Sidebar => [SIDEBAR_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS].concat(),
+            Focus::List => match self.view() {
+                Some(v) => match v.kind {
+                    ListKind::Queue => [QUEUE_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS].concat(),
+                    _ => [LIST_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS].concat(),
+                },
+                None => vec![],
+            },
+            Focus::Player => [MAXIMIZED_PLAYER_KEYS, GLOBAL_PLAYER_KEYS].concat(),
+        }
+    }
+
     pub fn on_action(&mut self, action: Action) {
         if self.help {
             if matches!(action, Action::Help | Action::Quit | Action::Back) {
@@ -319,6 +346,11 @@ impl AppState {
             }
             return;
         }
+
+        if !self.get_supported_actions().contains(&action) {
+            return;
+        }
+
         let half = (self.list_height / 2).max(1) as isize;
         match action {
             Action::Down => self.move_by(1),
@@ -333,6 +365,7 @@ impl AppState {
                 self.focus = match self.focus {
                     Focus::Sidebar => Focus::List,
                     Focus::List => Focus::Sidebar,
+                    Focus::Player => Focus::Player,
                 }
             }
             Action::Jump(i) => {
@@ -359,6 +392,13 @@ impl AppState {
             Action::DebugLine => self.debug_line = !self.debug_line,
             Action::Quit => self.request_quit(),
             Action::Play => self.play(),
+            Action::TogglePlayerFocus => {
+                self.focus = if matches!(self.focus, Player) {
+                    Focus::List
+                } else {
+                    Focus::Player
+                }
+            }
             // routed through on_search_key while the prompt is open, never via lookup
             Action::SearchSubmit | Action::SearchCancel => {}
         }
@@ -391,6 +431,7 @@ impl AppState {
                 }
                 self.ensure_loaded();
             }
+            Focus::Player => (),
         }
     }
 
