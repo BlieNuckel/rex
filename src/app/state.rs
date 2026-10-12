@@ -352,8 +352,7 @@ impl AppState {
                 return allowed_actions.contains(&action);
             }
         }
-
-        return true;
+        true
     }
 
     pub fn on_action(&mut self, action: Action) {
