@@ -17,6 +17,7 @@ anyhow = "1.0.104"
 clap = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
 cpal = "0.18.2"
 directories = "6.0.0"
+image = { version = "0.25.10", default-features = false, features = ["jpeg", "png"] }
 ratatui = "0.30.2"
 rtrb = "0.4.0"
 rubato = "5.0.1"

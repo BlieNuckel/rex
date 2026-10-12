@@ -1,5 +1,6 @@
 use std::sync::mpsc::SyncSender;
 
+use image::RgbImage;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Color;
 use std::time::{Duration, Instant};
@@ -91,6 +92,13 @@ pub struct NowPlaying {
     pub volume: f32,
 }
 
+/// cover art for the thumb of the track it was fetched for
+pub struct Cover {
+    pub thumb: String,
+    /// `None` while loading or when the art could not be fetched or decoded
+    pub art: Option<RgbImage>,
+}
+
 pub struct Message {
     pub text: String,
     pub at: Instant,
@@ -110,6 +118,7 @@ pub struct AppState {
     next_id: u64,
     pub queue: Queue,
     pub now: NowPlaying,
+    pub cover: Option<Cover>,
     /// queue entry id and rating key of the last `Load` not yet confirmed by `TrackStarted`
     pub(super) loading: Option<(u64, String)>,
     /// queue entry id and rating key handed to the player as the gapless successor
@@ -146,6 +155,7 @@ impl AppState {
                 volume,
                 ..Default::default()
             },
+            cover: None,
             loading: None,
             enqueued: None,
             failures: 0,
@@ -207,6 +217,33 @@ impl AppState {
         self.message
             .as_ref()
             .map(|m| MESSAGE_TTL.saturating_sub(m.at.elapsed()))
+    }
+
+    /// requests the cover of the current track's thumb unless it is already loaded or loading
+    pub fn sync_cover(&mut self) {
+        let Some(t) = &self.now.track else { return };
+        if t.thumb.is_empty() || self.cover.as_ref().is_some_and(|c| c.thumb == t.thumb) {
+            return;
+        }
+        let thumb = t.thumb.clone();
+        self.cover = Some(Cover {
+            thumb: thumb.clone(),
+            art: None,
+        });
+        if self.api.try_send(ApiRequest::Cover { thumb }).is_err() {
+            tracing::warn!("cover request dropped, API queue full");
+            self.cover = None;
+        }
+    }
+
+    pub fn on_cover(&mut self, thumb: String, result: Result<RgbImage, String>) {
+        let Some(c) = self.cover.as_mut().filter(|c| c.thumb == thumb) else {
+            return;
+        };
+        match result {
+            Ok(img) => c.art = Some(img),
+            Err(e) => tracing::warn!("cover art: {e}"),
+        }
     }
 
     pub fn expire_message(&mut self) {

@@ -1,8 +1,10 @@
+use image::RgbImage;
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::{Block, Paragraph, Widget};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::queue::{Queue, Repeat};
@@ -116,18 +118,58 @@ fn draw_non_empty_state(f: &mut Frame, area: Rect, s: &AppState) {
     .spacing(1)
     .areas(area_centered);
 
-    draw_cover_art(f, cover_art);
+    draw_cover_art(f, cover_art, s);
     draw_info(f, artist_info, now);
     draw_progress_bar(f, progress_bar, now, s.accent);
     draw_actions(f, actions, &s.now, &s.queue, s.accent)
 }
 
-fn draw_cover_art(f: &mut Frame, area: Rect) {
-    let centered_art = area.centered(Constraint::Fill(1), Constraint::Length(1));
-    f.render_widget(
-        Paragraph::new("No cover art available").centered(),
-        centered_art,
-    );
+fn draw_cover_art(f: &mut Frame, area: Rect, s: &AppState) {
+    let thumb = s.now.track.as_ref().map(|t| t.thumb.as_str());
+    let art = s
+        .cover
+        .as_ref()
+        .filter(|c| Some(c.thumb.as_str()) == thumb)
+        .and_then(|c| c.art.as_ref());
+    let Some(art) = art else {
+        let centered_art = area.centered(Constraint::Fill(1), Constraint::Length(1));
+        f.render_widget(
+            Paragraph::new("No cover art available").centered(),
+            centered_art,
+        );
+        return;
+    };
+    // a terminal cell is about twice as tall as it is wide, so a square takes half as many rows
+    let side = area.width.min(area.height.saturating_mul(2)) & !1;
+    let square = area.centered(Constraint::Length(side), Constraint::Length(side / 2));
+    f.render_widget(CoverArt(art), square);
+}
+
+/// pixelates the image into cells using half blocks: each cell shows two stacked pixels,
+/// the top one as its foreground and the bottom one as its background
+struct CoverArt<'a>(&'a RgbImage);
+
+impl Widget for CoverArt<'_> {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let (iw, ih) = self.0.dimensions();
+        let side = iw.min(ih);
+        let (ox, oy) = ((iw - side) / 2, (ih - side) / 2);
+        let (pw, ph) = (u32::from(area.width), u32::from(area.height) * 2);
+        let pixel = |x: u32, y: u32| {
+            let [r, g, b] = self.0.get_pixel(ox + x * side / pw, oy + y * side / ph).0;
+            Color::Rgb(r, g, b)
+        };
+        for row in 0..area.height {
+            for col in 0..area.width {
+                let (x, y) = (u32::from(col), u32::from(row) * 2);
+                if let Some(cell) = buf.cell_mut((area.x + col, area.y + row)) {
+                    cell.set_symbol("▀")
+                        .set_fg(pixel(x, y))
+                        .set_bg(pixel(x, y + 1));
+                }
+            }
+        }
+    }
 }
 
 fn draw_info(f: &mut Frame, area: Rect, now: &NowPlaying) {
