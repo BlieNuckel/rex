@@ -11,6 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use image::RgbImage;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use tracing::warn;
 
@@ -57,6 +58,9 @@ pub enum ApiRequest {
         query: String,
     },
     Report(Vec<Report>),
+    Cover {
+        thumb: String,
+    },
 }
 
 pub enum PageData {
@@ -80,6 +84,10 @@ pub enum AppEvent {
     Search {
         query: String,
         result: Result<SearchResults, String>,
+    },
+    Cover {
+        thumb: String,
+        result: Result<RgbImage, String>,
     },
     Player(PlayerEvent),
     MediaIntegration(MediaControlEvent),
@@ -187,6 +195,7 @@ fn event_loop(
             handle(state, ev);
         }
         state.expire_message();
+        state.sync_cover();
         if state.media_integration_dirty {
             state.media_integration_dirty = false;
             if let Some(m) = media_integration.as_deref_mut() {
@@ -220,6 +229,7 @@ fn handle(state: &mut AppState, ev: AppEvent) {
             Err(e) => state.error(e),
         },
         AppEvent::Search { query, result } => state.on_search(query, result),
+        AppEvent::Cover { thumb, result } => state.on_cover(thumb, result),
         AppEvent::Player(ev) => state.on_player(ev),
         AppEvent::MediaIntegration(ev) => state.on_media_integration(ev),
         AppEvent::Signal => state.quit = true,
@@ -370,6 +380,10 @@ impl ApiContext {
                 reports.iter().for_each(|r| send_report(c, r));
                 return None;
             }
+            ApiRequest::Cover { thumb } => AppEvent::Cover {
+                result: self.call(|| fetch_cover(c, &thumb)).map_err(err),
+                thumb,
+            },
         })
     }
 }
@@ -421,6 +435,15 @@ fn fetch_page(c: &PlexClient, section: &str, kind: &ListKind, start: u32) -> Res
         ListKind::PlaylistTracks(rk) => PageData::Tracks(c.playlist_tracks(rk, start)?),
         ListKind::Search | ListKind::Queue => anyhow::bail!("{kind:?} is not paginated"),
     })
+}
+
+/// longest side of the stored cover; the player pixelates it down to the cells it has
+const COVER_SIZE: u32 = 128;
+
+fn fetch_cover(c: &PlexClient, thumb: &str) -> Result<RgbImage> {
+    let bytes = c.get_bytes(thumb)?;
+    let img = image::load_from_memory(&bytes).context("decoding cover art")?;
+    Ok(img.thumbnail(COVER_SIZE, COVER_SIZE).to_rgb8())
 }
 
 fn fetch_tracks(c: &PlexClient, source: &TrackSource) -> Result<Vec<Track>> {
