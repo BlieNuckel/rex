@@ -6,8 +6,9 @@ use ratatui::widgets::{Block, Clear, Paragraph};
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::app::keys::{BINDINGS, key_name};
+use crate::app::now_playing::NowPlaying;
 use crate::app::queue::{Queue, Repeat};
-use crate::app::state::{AppState, Focus, Items, ListKind, NowPlaying, SECTIONS, SearchItem, View};
+use crate::app::state::{AppState, Focus, Items, ListKind, SECTIONS, SearchItem, View};
 use crate::plex::models::{Album, Artist, Track};
 
 const SIDEBAR_WIDTH: u16 = 19;
@@ -184,41 +185,20 @@ fn render_line_marker(v: &View, i: usize, is_playing: bool) -> &'static str {
 
 fn item_is_playing(v: &View, i: usize, now_playing: &NowPlaying, queue: &Queue) -> bool {
     match &v.items {
-        Items::Artists(a) => artist_playing_now(now_playing, &a[i].title),
-        Items::Albums(a) => album_playing_now(now_playing, &a[i].rating_key),
+        Items::Artists(a) => now_playing.artist_playing_now(&a[i].title),
+        Items::Albums(a) => now_playing.album_playing_now(&a[i].rating_key),
         Items::Tracks(ts) => match v.kind {
-            ListKind::Queue => track_playing_now(now_playing, &queue.entries[i].track.rating_key),
-            _ => track_playing_now(now_playing, &ts[i].rating_key),
+            ListKind::Queue => now_playing.track_playing_now(&queue.entries[i].track.rating_key),
+            _ => now_playing.track_playing_now(&ts[i].rating_key),
         },
         Items::Search(items) => match &items[i] {
             SearchItem::Header(_) => false,
-            SearchItem::Artist(a) => artist_playing_now(now_playing, &a.title),
-            SearchItem::Album(a) => album_playing_now(now_playing, &a.rating_key),
-            SearchItem::Track(t) => track_playing_now(now_playing, &t.rating_key),
+            SearchItem::Artist(a) => now_playing.artist_playing_now(&a.title),
+            SearchItem::Album(a) => now_playing.album_playing_now(&a.rating_key),
+            SearchItem::Track(t) => now_playing.track_playing_now(&t.rating_key),
         },
         _ => false,
     }
-}
-
-fn artist_playing_now(now_playing: &NowPlaying, artist_title: &String) -> bool {
-    now_playing
-        .track
-        .as_ref()
-        .is_some_and(|t| t.grandparent_title == *artist_title)
-}
-
-fn album_playing_now(now_playing: &NowPlaying, album_key: &String) -> bool {
-    now_playing
-        .track
-        .as_ref()
-        .is_some_and(|t| t.parent_rating_key == *album_key)
-}
-
-fn track_playing_now(now_playing: &NowPlaying, track_key: &String) -> bool {
-    now_playing
-        .track
-        .as_ref()
-        .is_some_and(|t| t.rating_key == *track_key)
 }
 
 fn artist_row(a: &Artist) -> (String, String) {

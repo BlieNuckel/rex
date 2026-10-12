@@ -8,6 +8,7 @@ use super::keys::Action;
 use super::queue::Queue;
 use super::reporting::Reporter;
 use super::{AddMode, ApiRequest, PageData, TrackSource};
+use crate::app::now_playing::NowPlaying;
 use crate::audio::player::PlayerCmd;
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Playlist, Track};
@@ -75,15 +76,6 @@ impl View {
     fn complete(&self) -> bool {
         !self.fetchable() || self.total.is_some_and(|t| self.items.len() >= t as usize)
     }
-}
-
-#[derive(Default)]
-pub struct NowPlaying {
-    pub track: Option<Track>,
-    pub position_ms: u64,
-    pub paused: bool,
-    pub buffering: bool,
-    pub volume: f32,
 }
 
 pub struct Message {
