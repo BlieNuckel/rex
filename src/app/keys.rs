@@ -199,7 +199,12 @@ pub const BINDINGS: &[Binding] = &[
     ),
     bind(
         Action::Back,
-        &[key('h'), code(KeyCode::Left), code(KeyCode::Backspace)],
+        &[
+            key('h'),
+            code(KeyCode::Left),
+            code(KeyCode::Backspace),
+            code(KeyCode::Esc),
+        ],
     ),
     bind(Action::ToggleFocus, &[code(KeyCode::Tab)]),
     bind(Action::Jump(Section::Artists), &[key('1')]),
