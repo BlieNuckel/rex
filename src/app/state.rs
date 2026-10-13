@@ -11,7 +11,7 @@ use super::reporting::Reporter;
 use super::{AddMode, ApiRequest, PageData, TrackSource};
 use crate::app::keys::{
     GLOBAL_PLAYER_KEYS, HELP_KEYS, LIST_KEYS, MAXIMIZED_PLAYER_KEYS, NAV_KEYS, QUEUE_KEYS,
-    SEARCH_INPUT_KEYS, SIDEBAR_KEYS,
+    SEARCH_INPUT_KEYS,
 };
 use crate::app::now_playing::NowPlaying;
 use crate::audio::player::PlayerCmd;
@@ -368,7 +368,7 @@ impl AppState {
             (Some(Modal::Search(_)), _) => &[SEARCH_INPUT_KEYS],
             (Some(Modal::Help), _) => &[HELP_KEYS],
             (None, Screen::Player) => &[MAXIMIZED_PLAYER_KEYS, GLOBAL_PLAYER_KEYS],
-            (None, Screen::Browse(Focus::Sidebar)) => &[SIDEBAR_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS],
+            (None, Screen::Browse(Focus::Sidebar)) => &[NAV_KEYS, GLOBAL_PLAYER_KEYS],
             (None, Screen::Browse(Focus::List)) => match self.view().map(|v| &v.kind) {
                 Some(ListKind::Queue) => &[QUEUE_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS],
                 Some(_) => &[LIST_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS],

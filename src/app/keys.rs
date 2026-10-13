@@ -70,7 +70,7 @@ pub const NAV_KEYS: &[Action] = &[
     Action::Search,
 ];
 
-pub const LIST_KEYS: &[Action] = &[Action::Open, Action::Play, Action::Append, Action::PlayNext];
+pub const LIST_KEYS: &[Action] = &[Action::Play, Action::Append, Action::PlayNext];
 
 pub const QUEUE_KEYS: &[Action] = &[
     Action::Remove,
@@ -82,8 +82,6 @@ pub const QUEUE_KEYS: &[Action] = &[
 pub const MAXIMIZED_PLAYER_KEYS: &[Action] = &[];
 
 pub const SEARCH_INPUT_KEYS: &[Action] = &[Action::SearchSubmit, Action::SearchCancel];
-
-pub const SIDEBAR_KEYS: &[Action] = &[Action::Open, Action::Search, Action::Help];
 
 pub const HELP_KEYS: &[Action] = &[Action::Help, Action::Quit, Action::Back];
 
