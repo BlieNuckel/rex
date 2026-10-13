@@ -24,8 +24,8 @@ const FILL_BUDGET: Duration = Duration::from_millis(50);
 
 #[derive(Debug)]
 pub enum PlayerCmd {
-    Load(Track),
-    EnqueueNext(Track),
+    Load(Arc<Track>),
+    EnqueueNext(Arc<Track>),
     Play,
     Pause,
     Seek(u64),
@@ -37,7 +37,7 @@ pub enum PlayerCmd {
 #[derive(Debug)]
 pub enum PlayerEvent {
     Position(u64),
-    TrackStarted(Track),
+    TrackStarted(Arc<Track>),
     TrackEnded(String),
     Error {
         rating_key: String,
@@ -98,12 +98,12 @@ pub fn spawn(
 }
 
 struct Loaded {
-    track: Track,
+    track: Arc<Track>,
     dec: Decoder,
 }
 
 struct Playing {
-    track: Track,
+    track: Arc<Track>,
     start: u64,
     offset_ms: u64,
 }
@@ -125,7 +125,7 @@ struct Player {
     /// Frames written into the ring buffer, on the same scale as `Output::played`
     written: u64,
     /// Tracks whose first frame is queued at the given output frame index
-    starts: VecDeque<(u64, Track)>,
+    starts: VecDeque<(u64, Arc<Track>)>,
     /// Output frame index at which the last decoded track finishes
     end_at: Option<u64>,
     playing: Option<Playing>,
@@ -273,7 +273,7 @@ impl Player {
         self.written = self.out.played();
     }
 
-    fn load(&mut self, track: Track) {
+    fn load(&mut self, track: Arc<Track>) {
         self.reset_pipeline();
         let loaded = match self.next.take() {
             Some(n) if n.track.rating_key == track.rating_key => Ok(n),
@@ -292,7 +292,7 @@ impl Player {
         }
     }
 
-    fn enqueue_next(&mut self, track: Track) {
+    fn enqueue_next(&mut self, track: Arc<Track>) {
         let rk = track.rating_key.clone();
         if self.next_pending.as_ref() == Some(&rk)
             || self.next.as_ref().is_some_and(|n| n.track.rating_key == rk)
@@ -471,7 +471,7 @@ impl Player {
                 break;
             };
             if let Some(p) = self.playing.take() {
-                self.emit(PlayerEvent::TrackEnded(p.track.rating_key));
+                self.emit(PlayerEvent::TrackEnded(p.track.rating_key.clone()));
             }
             self.emit(PlayerEvent::TrackStarted(track.clone()));
             self.playing = Some(Playing {
@@ -488,7 +488,7 @@ impl Player {
         {
             self.end_at = None;
             if let Some(p) = self.playing.take() {
-                self.emit(PlayerEvent::TrackEnded(p.track.rating_key));
+                self.emit(PlayerEvent::TrackEnded(p.track.rating_key.clone()));
             }
             if self.next_pending.is_none() {
                 self.out.suspend();
@@ -509,7 +509,7 @@ impl Player {
 fn open(
     client: &Arc<PlexClient>,
     cache_dir: &std::path::Path,
-    track: Track,
+    track: Arc<Track>,
     events: &SyncSender<PlayerEvent>,
 ) -> Result<Loaded> {
     static SEQ: AtomicU64 = AtomicU64::new(0);

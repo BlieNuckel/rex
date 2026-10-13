@@ -1,8 +1,10 @@
+use std::sync::Arc;
+
 use crate::plex::models::Track;
 
 #[derive(Default)]
 pub struct NowPlaying {
-    pub track: Option<Track>,
+    pub track: Option<Arc<Track>>,
     pub position_ms: u64,
     pub paused: bool,
     pub buffering: bool,

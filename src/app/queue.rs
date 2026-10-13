@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::plex::models::Track;
@@ -22,7 +23,7 @@ impl Repeat {
 
 pub struct Entry {
     pub id: u64,
-    pub track: Track,
+    pub track: Arc<Track>,
 }
 
 /// tracks in play order; `unshuffled` remembers insertion order so shuffle can be undone
@@ -70,7 +71,7 @@ impl Queue {
         self.current.is_some_and(|i| self.entries[i].id == id)
     }
 
-    fn make(&mut self, tracks: Vec<Track>) -> Vec<Entry> {
+    fn make(&mut self, tracks: Vec<Arc<Track>>) -> Vec<Entry> {
         tracks
             .into_iter()
             .map(|track| {
@@ -83,7 +84,7 @@ impl Queue {
             .collect()
     }
 
-    pub fn replace(&mut self, tracks: Vec<Track>, start: usize) {
+    pub fn replace(&mut self, tracks: Vec<Arc<Track>>, start: usize) {
         self.entries = self.make(tracks);
         self.unshuffled = self.entries.iter().map(|e| e.id).collect();
         self.current = (start < self.entries.len()).then_some(start);
@@ -92,13 +93,13 @@ impl Queue {
         }
     }
 
-    pub fn append(&mut self, tracks: Vec<Track>) {
+    pub fn append(&mut self, tracks: Vec<Arc<Track>>) {
         let new = self.make(tracks);
         self.unshuffled.extend(new.iter().map(|e| e.id));
         self.entries.extend(new);
     }
 
-    pub fn play_next(&mut self, tracks: Vec<Track>) {
+    pub fn play_next(&mut self, tracks: Vec<Arc<Track>>) {
         let new = self.make(tracks);
         let at = self.current.map_or(0, |c| c + 1);
         let uat = self

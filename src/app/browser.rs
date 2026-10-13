@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::mpsc::SyncSender;
 
 use super::{ApiRequest, PageData};
@@ -60,7 +61,7 @@ pub enum ListKind {
 pub enum Items {
     Artists(Vec<Artist>),
     Albums(Vec<Album>),
-    Tracks(Vec<Track>),
+    Tracks(Vec<Arc<Track>>),
     Playlists(Vec<Playlist>),
     Search(Vec<SearchItem>),
 }
@@ -69,7 +70,7 @@ pub enum SearchItem {
     Header(String),
     Artist(Artist),
     Album(Album),
-    Track(Track),
+    Track(Arc<Track>),
 }
 
 impl Items {
@@ -89,7 +90,7 @@ pub enum Selected<'a> {
     Album(&'a Album),
     Playlist(&'a Playlist),
     /// a track and the track list it sits in, `None` for a search result
-    Track(&'a Track, Option<&'a [Track]>),
+    Track(&'a Arc<Track>, Option<&'a [Arc<Track>]>),
 }
 
 pub struct View {

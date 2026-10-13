@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::sync::mpsc::{SyncSender, TrySendError};
 use std::time::Instant;
 
@@ -110,7 +111,7 @@ impl Playback {
     }
 
     /// replaces the queue with `tracks` and plays from `start`
-    pub fn play_tracks(&mut self, tracks: Vec<Track>, start: usize) {
+    pub fn play_tracks(&mut self, tracks: Vec<Arc<Track>>, start: usize) {
         self.queue.replace(tracks, start);
         self.play_index(self.queue.current.unwrap_or(0));
     }
@@ -345,7 +346,7 @@ impl Playback {
         }
     }
 
-    pub fn add_tracks(&mut self, mode: AddMode, tracks: Vec<Track>) {
+    pub fn add_tracks(&mut self, mode: AddMode, tracks: Vec<Arc<Track>>) {
         let n = tracks.len();
         match mode {
             AddMode::Append => self.queue.append(tracks),
@@ -384,13 +385,13 @@ impl Playback {
     }
 
     /// queues the whole album of `track` and starts at it
-    pub fn play_from_album(&mut self, track: Track) {
+    pub fn play_from_album(&mut self, track: Arc<Track>) {
         let start = track.rating_key.clone();
         if track.parent_rating_key.is_empty() {
             return self.add_tracks(AddMode::PlayFrom(start), vec![track]);
         }
         self.add_source(
-            TrackSource::Album(track.parent_rating_key),
+            TrackSource::Album(track.parent_rating_key.clone()),
             AddMode::PlayFrom(start),
         );
     }

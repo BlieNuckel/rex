@@ -69,7 +69,7 @@ pub enum ApiRequest {
 pub enum PageData {
     Artists(Page<Artist>),
     Albums(Page<Album>),
-    Tracks(Page<Track>),
+    Tracks(Page<Arc<Track>>),
     Playlists(Page<Playlist>),
 }
 
@@ -82,7 +82,7 @@ pub enum AppEvent {
     },
     Tracks {
         mode: AddMode,
-        result: Result<Vec<Track>, String>,
+        result: Result<Vec<Arc<Track>>, String>,
     },
     Search {
         view: u64,
@@ -457,7 +457,7 @@ fn fetch_cover(c: &PlexClient, thumb: &str) -> Result<RgbImage> {
     Ok(img.thumbnail(COVER_SIZE, COVER_SIZE).to_rgb8())
 }
 
-fn fetch_tracks(c: &PlexClient, source: &TrackSource) -> Result<Vec<Track>> {
+fn fetch_tracks(c: &PlexClient, source: &TrackSource) -> Result<Vec<Arc<Track>>> {
     let mut out = Vec::new();
     loop {
         let start = out.len() as u32;

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 
 use super::PlexClient;
@@ -16,7 +18,7 @@ const TYPE_TRACK: &str = "10";
 pub struct SearchResults {
     pub artists: Vec<Artist>,
     pub albums: Vec<Album>,
-    pub tracks: Vec<Track>,
+    pub tracks: Vec<Arc<Track>>,
 }
 
 impl PlexClient {
@@ -33,11 +35,11 @@ impl PlexClient {
         Ok(Page { items, total })
     }
 
-    pub fn track(&self, rating_key: &str) -> Result<Track> {
+    pub fn track(&self, rating_key: &str) -> Result<Arc<Track>> {
         let path = format!("/library/metadata/{rating_key}");
         let c: Container<MetadataList> = self.get(&path, &[])?;
         let item = c.mc.items.into_iter().next();
-        item.map(Track::from)
+        item.map(Into::into)
             .ok_or_else(|| anyhow::anyhow!("no item with rating key {rating_key}"))
     }
 
@@ -74,12 +76,12 @@ impl PlexClient {
         self.page(&path, &query, start, PAGE_SIZE)
     }
 
-    pub fn album_tracks(&self, album: &str, start: u32) -> Result<Page<Track>> {
+    pub fn album_tracks(&self, album: &str, start: u32) -> Result<Page<Arc<Track>>> {
         let path = format!("/library/metadata/{album}/children");
         self.page(&path, &[], start, PAGE_SIZE)
     }
 
-    pub fn artist_tracks(&self, artist: &str, start: u32) -> Result<Page<Track>> {
+    pub fn artist_tracks(&self, artist: &str, start: u32) -> Result<Page<Arc<Track>>> {
         let path = format!("/library/metadata/{artist}/allLeaves");
         self.page(&path, &[], start, PAGE_SIZE)
     }
@@ -88,7 +90,7 @@ impl PlexClient {
         self.page("/playlists", &[("playlistType", "audio")], start, PAGE_SIZE)
     }
 
-    pub fn playlist_tracks(&self, playlist: &str, start: u32) -> Result<Page<Track>> {
+    pub fn playlist_tracks(&self, playlist: &str, start: u32) -> Result<Page<Arc<Track>>> {
         let path = format!("/playlists/{playlist}/items");
         self.page(&path, &[], start, PAGE_SIZE)
     }

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -43,7 +45,7 @@ pub struct Album {
     pub leaf_count: Option<u32>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Track {
     pub rating_key: String,
     pub title: String,
@@ -159,6 +161,12 @@ impl From<RawItem> for Track {
             container: media.container,
             audio_codec: media.audio_codec,
         }
+    }
+}
+
+impl From<RawItem> for Arc<Track> {
+    fn from(r: RawItem) -> Self {
+        Arc::new(r.into())
     }
 }
 
