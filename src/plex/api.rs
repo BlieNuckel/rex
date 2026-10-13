@@ -98,10 +98,15 @@ impl PlexClient {
     pub fn search(&self, section: &str, query: &str) -> Result<SearchResults> {
         let path = format!("/library/sections/{section}/search");
         let q = |kind| [("type", kind), ("query", query)];
-        Ok(SearchResults {
-            artists: self.page(&path, &q(TYPE_ARTIST), 0, SEARCH_LIMIT)?.items,
-            albums: self.page(&path, &q(TYPE_ALBUM), 0, SEARCH_LIMIT)?.items,
-            tracks: self.page(&path, &q(TYPE_TRACK), 0, SEARCH_LIMIT)?.items,
+        std::thread::scope(|s| {
+            let artists = s.spawn(|| self.page(&path, &q(TYPE_ARTIST), 0, SEARCH_LIMIT));
+            let albums = s.spawn(|| self.page(&path, &q(TYPE_ALBUM), 0, SEARCH_LIMIT));
+            let tracks = self.page(&path, &q(TYPE_TRACK), 0, SEARCH_LIMIT)?.items;
+            Ok(SearchResults {
+                artists: artists.join().unwrap()?.items,
+                albums: albums.join().unwrap()?.items,
+                tracks,
+            })
         })
     }
 }
