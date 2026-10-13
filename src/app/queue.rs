@@ -174,11 +174,7 @@ impl Queue {
 
     /// moves the current entry to the front and shuffles everything else after it
     fn shuffle_around_current(&mut self) {
-        if let Some(c) = self.current {
-            self.entries.swap(0, c);
-            self.current = Some(0);
-        }
-        let start = usize::from(self.current.is_some());
+        let start = self.current.unwrap_or_default() + 1;
         for i in (start + 1..self.entries.len()).rev() {
             let j = start + (self.rand() % (i - start + 1) as u64) as usize;
             self.entries.swap(i, j);
