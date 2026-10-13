@@ -160,10 +160,12 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
         v.offset = v.selected + 1 - height;
     }
     let end = (v.offset + height).min(len);
+    let multi_disc = matches!(v.kind, ListKind::AlbumTracks(_))
+        && matches!(&v.items, Items::Tracks(ts) if ts.iter().any(|t| t.disc > Some(1)));
     let lines: Vec<Line> = (v.offset..end)
         .map(|i| {
             let is_playing = item_is_playing(v, i, &s.playback.now, &s.playback.queue);
-            let (left, right) = row(v, i, &s.playback.queue);
+            let (left, right) = row(v, i, &s.playback.queue, multi_disc);
             if let Items::Search(items) = &v.items
                 && let SearchItem::Header(h) = &items[i]
             {
@@ -250,13 +252,13 @@ fn track_row(list_kind: &ListKind, t: &Track, multi_disc: bool) -> (String, Stri
     (left, right)
 }
 
-fn row(v: &View, i: usize, queue: &Queue) -> (String, String) {
+fn row(v: &View, i: usize, queue: &Queue, multi_disc: bool) -> (String, String) {
     match &v.items {
         Items::Artists(a) => artist_row(&a[i]),
         Items::Albums(a) => album_row(&v.kind, &a[i]),
         Items::Tracks(tracks) => match &v.kind {
             ListKind::Queue => track_row(&v.kind, &queue.entries[i].track, false),
-            _ => track_row(&v.kind, &tracks[i], tracks.iter().any(|t| t.disc > Some(1))),
+            _ => track_row(&v.kind, &tracks[i], multi_disc),
         },
         Items::Search(items) => match &items[i] {
             SearchItem::Header(_) => (String::new(), String::new()),
