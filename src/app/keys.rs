@@ -1,5 +1,7 @@
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::browser::Section;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Down,
@@ -12,7 +14,7 @@ pub enum Action {
     Play,
     Back,
     ToggleFocus,
-    Jump(usize),
+    Jump(Section),
     Search,
     PlayPause,
     Next,
@@ -62,11 +64,11 @@ pub const NAV_KEYS: &[Action] = &[
     Action::Open,
     Action::Back,
     Action::ToggleFocus,
-    Action::Jump(0),
-    Action::Jump(1),
-    Action::Jump(2),
-    Action::Jump(3),
-    Action::Jump(4),
+    Action::Jump(Section::Artists),
+    Action::Jump(Section::Albums),
+    Action::Jump(Section::Playlists),
+    Action::Jump(Section::Search),
+    Action::Jump(Section::Queue),
     Action::Search,
 ];
 
@@ -200,11 +202,11 @@ pub const BINDINGS: &[Binding] = &[
         &[key('h'), code(KeyCode::Left), code(KeyCode::Backspace)],
     ),
     bind(Action::ToggleFocus, &[code(KeyCode::Tab)]),
-    bind(Action::Jump(0), &[key('1')]),
-    bind(Action::Jump(1), &[key('2')]),
-    bind(Action::Jump(2), &[key('3')]),
-    bind(Action::Jump(3), &[key('4')]),
-    bind(Action::Jump(4), &[key('5')]),
+    bind(Action::Jump(Section::Artists), &[key('1')]),
+    bind(Action::Jump(Section::Albums), &[key('2')]),
+    bind(Action::Jump(Section::Playlists), &[key('3')]),
+    bind(Action::Jump(Section::Search), &[key('4')]),
+    bind(Action::Jump(Section::Queue), &[key('5')]),
     help_bar_only(bind(Action::Search, &[key('/')])),
     bind(Action::PlayPause, &[key(' ')]),
     bind(Action::Next, &[key('>')]),

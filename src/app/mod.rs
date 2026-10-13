@@ -25,7 +25,7 @@ use crate::plex::{PlexClient, auth};
 use browser::ListKind;
 use reporting::Report;
 use souvlaki::MediaControlEvent;
-use state::{AppState, Modal};
+use state::AppState;
 
 const API_WORKERS: usize = 2;
 const REPORT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -57,6 +57,7 @@ pub enum ApiRequest {
         mode: AddMode,
     },
     Search {
+        view: u64,
         query: String,
     },
     Report(Vec<Report>),
@@ -84,7 +85,7 @@ pub enum AppEvent {
         result: Result<Vec<Track>, String>,
     },
     Search {
-        query: String,
+        view: u64,
         result: Result<SearchResults, String>,
     },
     Cover {
@@ -213,13 +214,7 @@ fn event_loop(
 
 fn handle(state: &mut AppState, ev: AppEvent) {
     match ev {
-        AppEvent::Input(Event::Key(k)) if k.kind == KeyEventKind::Press => {
-            if matches!(state.modal, Some(Modal::Search(_))) {
-                state.on_search_key(k);
-            } else if let Some(action) = keys::lookup(k) {
-                state.on_action(action);
-            }
-        }
+        AppEvent::Input(Event::Key(k)) if k.kind == KeyEventKind::Press => state.on_key(k),
         AppEvent::Input(_) => {}
         AppEvent::Page {
             view,
@@ -235,8 +230,8 @@ fn handle(state: &mut AppState, ev: AppEvent) {
             Ok(tracks) => state.playback.add_tracks(mode, tracks),
             Err(e) => state.error(e),
         },
-        AppEvent::Search { query, result } => {
-            if let Err(e) = state.browser.on_search(query, result) {
+        AppEvent::Search { view, result } => {
+            if let Err(e) = state.browser.on_search(view, result) {
                 state.error(e);
             }
         }
@@ -382,9 +377,9 @@ impl ApiContext {
                     .call(|| fetch_page(c, section, &kind, start))
                     .map_err(err),
             },
-            ApiRequest::Search { query } => AppEvent::Search {
+            ApiRequest::Search { view, query } => AppEvent::Search {
+                view,
                 result: self.call(|| c.search(section, &query)).map_err(err),
-                query,
             },
             ApiRequest::Tracks { source, mode } => AppEvent::Tracks {
                 mode,

@@ -5,7 +5,7 @@ use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph};
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::browser::{Items, ListKind, SECTIONS, SearchItem, View};
+use crate::app::browser::{Items, ListKind, SearchItem, Section, View};
 use crate::app::keys::{BINDINGS, key_name};
 use crate::app::now_playing::NowPlaying;
 use crate::app::queue::Queue;
@@ -71,14 +71,14 @@ fn draw_sidebar(f: &mut Frame, s: &AppState, area: Rect) {
     let inner = block.inner(area);
     f.render_widget(block, area);
     let width = inner.width as usize;
-    let lines: Vec<Line> = SECTIONS
-        .iter()
-        .enumerate()
-        .map(|(i, name)| {
-            let selected = i == s.browser.section;
+    let lines: Vec<Line> = Section::ALL
+        .into_iter()
+        .map(|section| {
+            let selected = section == s.browser.section;
             let marker = if selected { "> " } else { "  " };
-            let text = match i {
-                4 => format!("{marker}{name} ({})", s.playback.queue.len()),
+            let name = section.title();
+            let text = match section {
+                Section::Queue => format!("{marker}{name} ({})", s.playback.queue.len()),
                 _ => format!("{marker}{name}"),
             };
             let line = Line::raw(fit(&text, "", width));

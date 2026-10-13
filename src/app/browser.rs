@@ -6,7 +6,44 @@ use crate::plex::models::{Album, Artist, Playlist, Track};
 
 const PREFETCH_MARGIN: usize = 50;
 
-pub const SECTIONS: [&str; 5] = ["Artists", "Albums", "Playlists", "Search", "Queue"];
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Section {
+    Artists,
+    Albums,
+    Playlists,
+    Search,
+    Queue,
+}
+
+impl Section {
+    pub const ALL: [Section; 5] = [
+        Section::Artists,
+        Section::Albums,
+        Section::Playlists,
+        Section::Search,
+        Section::Queue,
+    ];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Section::Artists => "Artists",
+            Section::Albums => "Albums",
+            Section::Playlists => "Playlists",
+            Section::Search => "Search",
+            Section::Queue => "Queue",
+        }
+    }
+
+    fn kind(self) -> ListKind {
+        match self {
+            Section::Artists => ListKind::Artists,
+            Section::Albums => ListKind::Albums,
+            Section::Playlists => ListKind::Playlists,
+            Section::Search => ListKind::Search,
+            Section::Queue => ListKind::Queue,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum ListKind {
@@ -47,6 +84,14 @@ impl Items {
     }
 }
 
+pub enum Selected<'a> {
+    Artist(&'a Artist),
+    Album(&'a Album),
+    Playlist(&'a Playlist),
+    /// a track and the track list it sits in, `None` for a search result
+    Track(&'a Track, Option<&'a [Track]>),
+}
+
 pub struct View {
     pub id: u64,
     pub kind: ListKind,
@@ -66,13 +111,29 @@ impl View {
     fn complete(&self) -> bool {
         !self.fetchable() || self.total.is_some_and(|t| self.items.len() >= t as usize)
     }
+
+    pub fn selected(&self) -> Option<Selected<'_>> {
+        let i = self.selected;
+        Some(match &self.items {
+            Items::Artists(a) => Selected::Artist(a.get(i)?),
+            Items::Albums(a) => Selected::Album(a.get(i)?),
+            Items::Playlists(p) => Selected::Playlist(p.get(i)?),
+            Items::Tracks(t) => Selected::Track(t.get(i)?, Some(t)),
+            Items::Search(items) => match items.get(i)? {
+                SearchItem::Header(_) => return None,
+                SearchItem::Artist(a) => Selected::Artist(a),
+                SearchItem::Album(a) => Selected::Album(a),
+                SearchItem::Track(t) => Selected::Track(t, None),
+            },
+        })
+    }
 }
 
 /// the library side: sections, the stack of opened lists and their paging
 pub struct Browser {
     api: SyncSender<ApiRequest>,
     next_id: u64,
-    pub section: usize,
+    pub section: Section,
     pub stack: Vec<View>,
     pub list_height: usize,
 }
@@ -82,11 +143,11 @@ impl Browser {
         let mut b = Self {
             api,
             next_id: 0,
-            section: 0,
+            section: Section::Artists,
             stack: Vec::new(),
             list_height: 10,
         };
-        b.set_section(0);
+        b.set_section(Section::Artists);
         b
     }
 
@@ -121,16 +182,9 @@ impl Browser {
         }
     }
 
-    pub fn set_section(&mut self, i: usize) {
-        self.section = i;
-        let kind = match i {
-            0 => ListKind::Artists,
-            1 => ListKind::Albums,
-            2 => ListKind::Playlists,
-            3 => ListKind::Search,
-            _ => ListKind::Queue,
-        };
-        let view = self.new_view(kind, SECTIONS[i].to_owned());
+    pub fn set_section(&mut self, section: Section) {
+        self.section = section;
+        let view = self.new_view(section.kind(), section.title().to_owned());
         self.stack = vec![view];
         self.ensure_loaded();
     }
@@ -142,12 +196,11 @@ impl Browser {
     }
 
     pub fn move_section(&mut self, delta: isize) {
-        let i = self
-            .section
+        let i = (self.section as usize)
             .saturating_add_signed(delta)
-            .min(SECTIONS.len() - 1);
-        if i != self.section {
-            self.set_section(i);
+            .min(Section::ALL.len() - 1);
+        if Section::ALL[i] != self.section {
+            self.set_section(Section::ALL[i]);
         }
     }
 
@@ -228,39 +281,33 @@ impl Browser {
 
     /// switches to the search section, keeping earlier results
     pub fn show_search(&mut self) {
-        if !matches!(self.stack.first().map(|v| &v.kind), Some(ListKind::Search)) {
-            self.set_section(3);
+        if self.section != Section::Search {
+            self.set_section(Section::Search);
         }
         self.stack.truncate(1);
-        self.section = 3;
     }
 
     pub fn search(&mut self, query: String) -> Result<(), String> {
+        self.next_id += 1;
+        let view = self.next_id;
         if let Some(v) = self.stack.first_mut() {
+            v.id = view;
             v.title = format!("Search: {query}");
             v.loading = true;
         }
         self.api
-            .try_send(ApiRequest::Search { query })
+            .try_send(ApiRequest::Search { view, query })
             .map_err(|_| "busy, try again".to_owned())
     }
 
     pub fn on_search(
         &mut self,
-        query: String,
+        view: u64,
         result: Result<SearchResults, String>,
     ) -> Result<(), String> {
-        let Some(v) = self
-            .stack
-            .iter_mut()
-            .find(|v| matches!(v.kind, ListKind::Search))
-        else {
+        let Some(v) = self.stack.iter_mut().find(|v| v.id == view) else {
             return Ok(());
         };
-        // a newer search was submitted while this one was in flight
-        if v.title != format!("Search: {query}") {
-            return Ok(());
-        }
         v.loading = false;
         let r = result?;
         let groups: [(&str, Vec<SearchItem>); 3] = [

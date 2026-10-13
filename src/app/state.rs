@@ -4,10 +4,10 @@ use std::time::{Duration, Instant};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::style::Color;
 
-use super::browser::{Browser, Items, ListKind, SearchItem};
+use super::browser::{Browser, ListKind, Selected, View};
 use super::keys::{
-    Action, GLOBAL_PLAYER_KEYS, HELP_KEYS, LIST_KEYS, MAXIMIZED_PLAYER_KEYS, NAV_KEYS, QUEUE_KEYS,
-    SEARCH_INPUT_KEYS,
+    self, Action, GLOBAL_PLAYER_KEYS, HELP_KEYS, LIST_KEYS, MAXIMIZED_PLAYER_KEYS, NAV_KEYS,
+    QUEUE_KEYS, SEARCH_INPUT_KEYS,
 };
 use super::playback::Playback;
 use super::{AddMode, ApiRequest, TrackSource};
@@ -145,7 +145,15 @@ impl AppState {
         groups.concat()
     }
 
-    pub fn on_action(&mut self, action: Action) {
+    pub fn on_key(&mut self, k: KeyEvent) {
+        if matches!(self.modal, Some(Modal::Search(_))) {
+            self.on_search_key(k);
+        } else if let Some(action) = keys::lookup(k) {
+            self.on_action(action);
+        }
+    }
+
+    fn on_action(&mut self, action: Action) {
         if !self.get_supported_actions().contains(&action) {
             return;
         }
@@ -173,8 +181,8 @@ impl AppState {
                     };
                 }
             }
-            Action::Jump(i) => {
-                self.browser.set_section(i);
+            Action::Jump(section) => {
+                self.browser.set_section(section);
                 self.screen = Screen::Browse(Focus::List);
             }
             Action::PlayPause => self.playback.toggle_pause(),
@@ -235,78 +243,45 @@ impl AppState {
             return;
         }
         let Some(v) = self.browser.view() else { return };
-        let i = v.selected;
         if matches!(v.kind, ListKind::Queue) {
-            return self.playback.play_index(i);
+            return self.playback.play_index(v.selected);
         }
-        let child = match &v.items {
-            Items::Artists(a) => a.get(i).map(|a| {
-                (
-                    ListKind::ArtistAlbums(a.rating_key.clone()),
-                    a.title.clone(),
-                )
-            }),
-            Items::Albums(a) => a.get(i).map(|a| {
+        let (kind, title) = match v.selected() {
+            Some(Selected::Artist(a)) => (
+                ListKind::ArtistAlbums(a.rating_key.clone()),
+                a.title.clone(),
+            ),
+            Some(Selected::Album(a)) => {
                 let title = if a.parent_title.is_empty() {
                     a.title.clone()
                 } else {
                     format!("{} — {}", a.title, a.parent_title)
                 };
                 (ListKind::AlbumTracks(a.rating_key.clone()), title)
-            }),
-            Items::Playlists(p) => p.get(i).map(|p| {
-                (
-                    ListKind::PlaylistTracks(p.rating_key.clone()),
-                    p.title.clone(),
-                )
-            }),
-            Items::Search(items) => match items.get(i) {
-                Some(SearchItem::Artist(a)) => Some((
-                    ListKind::ArtistAlbums(a.rating_key.clone()),
-                    a.title.clone(),
-                )),
-                Some(SearchItem::Album(a)) => Some((
-                    ListKind::AlbumTracks(a.rating_key.clone()),
-                    format!("{} — {}", a.title, a.parent_title),
-                )),
-                Some(SearchItem::Track(t)) => return self.playback.play_from_album(t.clone()),
-                _ => None,
-            },
-            Items::Tracks(t) if i < t.len() => return self.playback.play_tracks(t.clone(), i),
-            Items::Tracks(_) => None,
+            }
+            Some(Selected::Playlist(p)) => (
+                ListKind::PlaylistTracks(p.rating_key.clone()),
+                p.title.clone(),
+            ),
+            Some(Selected::Track(_, Some(list))) => {
+                return self.playback.play_tracks(list.to_vec(), v.selected);
+            }
+            Some(Selected::Track(t, None)) => return self.playback.play_from_album(t.clone()),
+            None => return,
         };
-        if let Some((kind, title)) = child {
-            self.browser.push(kind, title);
-        }
+        self.browser.push(kind, title);
     }
 
     /// `a` / `n`: queues the selected track directly, or fetches every track of an album, artist or playlist
     fn add_selected(&mut self, mode: AddMode) {
-        let Some(v) = self.browser.view() else { return };
-        let i = v.selected;
-        let source = match &v.items {
-            _ if matches!(v.kind, ListKind::Queue) => return,
-            Items::Tracks(t) => match t.get(i) {
-                Some(t) => return self.playback.add_tracks(mode, vec![t.clone()]),
-                None => return,
-            },
-            Items::Albums(a) => a.get(i).map(|a| TrackSource::Album(a.rating_key.clone())),
-            Items::Artists(a) => a.get(i).map(|a| TrackSource::Artist(a.rating_key.clone())),
-            Items::Playlists(p) => p
-                .get(i)
-                .map(|p| TrackSource::Playlist(p.rating_key.clone())),
-            Items::Search(items) => match items.get(i) {
-                Some(SearchItem::Track(t)) => {
-                    return self.playback.add_tracks(mode, vec![t.clone()]);
-                }
-                Some(SearchItem::Album(a)) => Some(TrackSource::Album(a.rating_key.clone())),
-                Some(SearchItem::Artist(a)) => Some(TrackSource::Artist(a.rating_key.clone())),
-                _ => None,
-            },
+        let source = match self.browser.view().and_then(View::selected) {
+            Some(Selected::Track(t, _)) => return self.playback.add_tracks(mode, vec![t.clone()]),
+            Some(Selected::Album(a)) => TrackSource::Album(a.rating_key.clone()),
+            Some(Selected::Artist(a)) => TrackSource::Artist(a.rating_key.clone()),
+            Some(Selected::Playlist(p)) => TrackSource::Playlist(p.rating_key.clone()),
+            None => return,
         };
-        if let Some(source) = source {
-            self.playback.add_source(source, mode);
-        }
+        self.playback.add_source(source, mode);
     }
 
     /// applies `f` to the selected queue entry; `f` returns the index to select afterwards
@@ -339,7 +314,7 @@ impl AppState {
     }
 
     /// keys typed while the search modal is open
-    pub fn on_search_key(&mut self, k: KeyEvent) {
+    fn on_search_key(&mut self, k: KeyEvent) {
         let Some(Modal::Search(input)) = &mut self.modal else {
             return;
         };
