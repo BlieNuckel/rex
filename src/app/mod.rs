@@ -450,7 +450,9 @@ fn fetch_page(c: &PlexClient, section: &str, kind: &ListKind, start: u32) -> Res
 const COVER_SIZE: u32 = 128;
 
 fn fetch_cover(c: &PlexClient, thumb: &str) -> Result<RgbImage> {
-    let bytes = c.get_bytes(thumb)?;
+    let size = COVER_SIZE.to_string();
+    let query = [("width", size.as_str()), ("height", &size), ("url", thumb)];
+    let bytes = c.get_bytes("/photo/:/transcode", &query)?;
     let img = image::load_from_memory(&bytes).context("decoding cover art")?;
     Ok(img.thumbnail(COVER_SIZE, COVER_SIZE).to_rgb8())
 }

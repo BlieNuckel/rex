@@ -171,8 +171,8 @@ impl PlexClient {
     }
 
     /// GET returning the raw response body, for images
-    pub fn get_bytes(&self, path: &str) -> Result<Vec<u8>> {
-        self.headers(self.agent.get(self.url(path)), &[])
+    pub fn get_bytes(&self, path: &str, query: &[(&str, &str)]) -> Result<Vec<u8>> {
+        self.headers(self.agent.get(self.url(path)), query)
             .call()
             .and_then(|mut r| r.body_mut().read_to_vec())
             .map_err(|e| describe(e, &format!("GET {}", self.url(path))))
