@@ -97,8 +97,11 @@ pub fn connect(cfg: &mut Config) -> Result<PlexClient> {
 }
 
 pub fn switch_section(cfg: &mut Config, pick: Option<usize>) -> Result<String> {
-    let client = connect_server(cfg)?;
-    pick_section(&client, cfg, pick)
+    let account = cfg
+        .token
+        .clone()
+        .context("not logged in; run `rex login`")?;
+    discover(cfg, &account, None, pick).map(|(_, title)| title)
 }
 
 fn connect_server(cfg: &mut Config) -> Result<PlexClient> {
@@ -126,7 +129,8 @@ fn connect_server(cfg: &mut Config) -> Result<PlexClient> {
         .clone()
         .context("not logged in; run `rex login`")?;
 
-    discover(cfg, &account)
+    let only = cfg.server_id.clone();
+    discover(cfg, &account, only.as_deref(), None).map(|(client, _)| client)
 }
 
 fn probe(uri: &str, expected_id: Option<&str>) -> bool {
@@ -205,8 +209,15 @@ pub fn reconnect(client: &PlexClient, cfg: &Config) -> Result<String> {
     Ok(uri)
 }
 
-fn discover(cfg: &mut Config, account: &str) -> Result<PlexClient> {
-    let servers = servers(account, &cfg.client_identifier, cfg.server_id.as_deref())?;
+fn discover(
+    cfg: &mut Config,
+    account: &str,
+    only: Option<&str>,
+    pick: Option<usize>,
+) -> Result<(PlexClient, String)> {
+    println!("Loading servers...");
+
+    let servers = servers(account, &cfg.client_identifier, only)?;
     let reachable = reachable(&servers);
 
     let mut choices = Vec::new();
@@ -235,7 +246,12 @@ fn discover(cfg: &mut Config, account: &str) -> Result<PlexClient> {
         .iter()
         .map(|(srv, _, _, sec)| format!("{} — {}", srv.name, sec.title))
         .collect();
-    let (srv, url, token, sec) = choices.swap_remove(choose("Music library", &labels)?);
+    let i = match pick {
+        Some(n) if (1..=labels.len()).contains(&n) => n - 1,
+        Some(n) => bail!("no music library {n}; there are {}", labels.len()),
+        None => choose("Music library", &labels)?,
+    };
+    let (srv, url, token, sec) = choices.swap_remove(i);
 
     info!("using server {} at {url}", srv.name);
     cfg.server_id = Some(srv.client_identifier.clone());
@@ -243,12 +259,8 @@ fn discover(cfg: &mut Config, account: &str) -> Result<PlexClient> {
     cfg.server_token = Some(token.clone());
     cfg.music_section = Some(sec.key);
     cfg.save()?;
-    Ok(PlexClient::new(
-        &url,
-        &token,
-        &cfg.client_identifier,
-        API_TIMEOUT,
-    ))
+    let client = PlexClient::new(&url, &token, &cfg.client_identifier, API_TIMEOUT);
+    Ok((client, format!("{} — {}", srv.name, sec.title)))
 }
 
 /// saves the chosen music library and returns its title
