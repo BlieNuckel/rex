@@ -37,7 +37,7 @@ pub fn draw(f: &mut Frame, s: &mut AppState) {
 }
 
 fn draw_minimized_player_layout(f: &mut Frame, s: &mut AppState, area: Rect) {
-    let [main, bar] = Layout::vertical([Constraint::Min(3), Constraint::Length(4)]).areas(area);
+    let [main, bar] = Layout::vertical([Constraint::Min(3), Constraint::Length(6)]).areas(area);
     let [side, list] =
         Layout::horizontal([Constraint::Length(SIDEBAR_WIDTH), Constraint::Min(10)]).areas(main);
 

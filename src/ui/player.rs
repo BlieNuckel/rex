@@ -1,16 +1,18 @@
 use image::RgbImage;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Margin, Rect};
-use ratatui::style::{Color, Modifier, Style, Stylize};
+use ratatui::crossterm::terminal::window_size;
+use ratatui::layout::{Margin, Rect};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Widget};
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::now_playing::NowPlaying;
-use crate::app::queue::{Queue, Repeat};
+use crate::app::queue::Repeat;
 use crate::app::state::AppState;
-use crate::ui::string_formatting::fit;
+use crate::plex::models::Track;
+use crate::ui::string_formatting::{fit, truncate};
 
 fn player_title(action: &str, accent: Color) -> Vec<Span<'static>> {
     vec![
@@ -20,126 +22,94 @@ fn player_title(action: &str, accent: Color) -> Vec<Span<'static>> {
     ]
 }
 
+const INFO_LINES: u16 = 4;
+
 pub fn draw_minimized_player(f: &mut Frame, s: &AppState, area: Rect) {
     let block = Block::bordered().title(player_title("maximize", s.accent));
-    let inner = block.inner(area);
+    let inner = block.inner(area).inner(Margin::new(1, 0));
     f.render_widget(block, area);
-    let width = inner.width as usize;
-    let now = &s.playback.now;
-
-    let first = match &now.track {
-        None => fit("■ not playing", "", width),
-        Some(t) => {
-            let icon = if now.paused { "‖" } else { "▶" };
-            let mut text = format!("{icon} {}", t.title);
-            for part in [&t.grandparent_title, &t.parent_title] {
-                if !part.is_empty() {
-                    text.push_str(if text.contains(" — ") {
-                        " · "
-                    } else {
-                        " — "
-                    });
-                    text.push_str(part);
-                }
-            }
-            fit(&text, if now.buffering { "buffering…" } else { "" }, width)
-        }
-    };
-
-    let mut right = String::new();
-    let duration = now.track.as_ref().and_then(|t| t.duration_ms);
-    if let Some(d) = duration {
-        right.push_str(&format!(" {}", crate::fmt_ms(d)));
-    }
-    right.push_str(&format!("  vol {:.0}%", now.volume * 100.0));
-    if s.playback.queue.shuffle {
-        right.push_str(" ⇄");
-    }
-    match s.playback.queue.repeat {
-        Repeat::Off => {}
-        Repeat::All => right.push_str(" ↻"),
-        Repeat::One => right.push_str(" ↻1"),
-    }
-    if s.debug_line {
-        right.push_str(&format!("  rss {:.1} MB", crate::rss_kb() as f64 / 1024.0));
-    }
-    let left = match now.track {
-        Some(_) => format!("{} ", crate::fmt_ms(now.position_ms)),
-        None => String::new(),
-    };
-    let bar_width = width.saturating_sub(left.width() + right.width());
-    let bar = match duration {
-        Some(d) if d > 0 && now.track.is_some() && bar_width >= 5 => {
-            let filled = ((now.position_ms.min(d) as f64 / d as f64) * bar_width as f64) as usize;
-            format!("{}{}", "━".repeat(filled), "─".repeat(bar_width - filled))
-        }
-        _ => String::new(),
-    };
-    let second = fit(&format!("{left}{bar}"), right.trim_start(), width);
-    f.render_widget(
-        Paragraph::new(vec![Line::raw(first), Line::raw(second)]),
-        inner,
-    );
+    f.render_widget(Paragraph::new(info_lines(s, inner.width as usize)), inner);
 }
 
 pub fn draw_maximized_player(f: &mut Frame, s: &AppState, area: Rect) {
     let block = Block::bordered().title(player_title("minimize", s.accent));
-    f.render_widget(&block, area);
+    let inner = block.inner(area).inner(Margin::new(1, 0));
+    f.render_widget(block, area);
+    let Some(track) = &s.playback.now.track else {
+        f.render_widget(Paragraph::new(info_lines(s, inner.width as usize)), inner);
+        return;
+    };
 
-    match &s.playback.now.track {
-        Some(_) => draw_non_empty_state(f, block.inner(area), s),
-        None => draw_empty_state(f, block.inner(area)),
+    let mut info = inner;
+    let mut header = INFO_LINES;
+
+    if !track.thumb.is_empty() {
+        let ratio = cell_ratio();
+        let rows = (inner.height / 2)
+            .min(16)
+            .min((f32::from(inner.width / 3) / ratio) as u16);
+        let cols = (f32::from(rows) * ratio).round() as u16;
+        if rows >= 4 {
+            if let Some(art) = cover_art(s, track) {
+                f.render_widget(CoverArt(art), Rect::new(inner.x, inner.y, cols, rows));
+            }
+            info.x += cols + 2;
+            info.width = info.width.saturating_sub(cols + 2);
+            header = header.max(rows);
+        }
+    }
+
+    info.y += (header - INFO_LINES) / 2;
+    info.height = INFO_LINES.min(inner.height);
+    f.render_widget(Paragraph::new(info_lines(s, info.width as usize)), info);
+
+    let queue = &s.playback.queue;
+    let mut list = inner;
+    list.y += header + 1;
+    list.height = list.height.saturating_sub(header + 1);
+    let width = list.width as usize;
+    let next = queue.current.map_or(0, |i| i + 1);
+
+    if list.height < 2 || next >= queue.len() {
+        return;
+    }
+
+    let mut lines = vec![Line::styled("up next", Color::DarkGray)];
+
+    lines.extend(
+        queue.entries[next..]
+            .iter()
+            .map(|e| {
+                let t = &e.track;
+                let d = t.duration_ms.map_or(String::new(), crate::fmt_ms);
+                Line::raw(fit(
+                    &format!("{} — {}", t.title, t.grandparent_title),
+                    &d,
+                    width,
+                ))
+            })
+            .take(list.height as usize - 1),
+    );
+    f.render_widget(Paragraph::new(lines), list);
+}
+
+/// cell height over cell width, from the terminal's pixel size when it reports one
+fn cell_ratio() -> f32 {
+    match window_size() {
+        Ok(w) if w.width > 0 && w.height > 0 && w.columns > 0 && w.rows > 0 => {
+            (f32::from(w.height) / f32::from(w.rows)) / (f32::from(w.width) / f32::from(w.columns))
+        }
+        _ => 2.0,
     }
 }
 
-fn draw_empty_state(f: &mut Frame, area: Rect) {
-    let text = "quiet for now";
-    let centered_area = area.centered(
-        Constraint::Length(text.width() as u16),
-        Constraint::Length(1),
-    );
-    f.render_widget(Paragraph::new(text).centered().bold(), centered_area)
-}
-
-fn draw_non_empty_state(f: &mut Frame, area: Rect, s: &AppState) {
-    let now = &s.playback.now;
-    let area_centered = area.inner(Margin::new(10, 1));
-
-    let [cover_art, artist_info, progress_bar, actions] = Layout::vertical([
-        Constraint::Min(20),
-        Constraint::Length(2),
-        Constraint::Length(1),
-        Constraint::Length(1),
-    ])
-    .spacing(1)
-    .areas(area_centered);
-
-    draw_cover_art(f, cover_art, s);
-    draw_info(f, artist_info, now);
-    draw_progress_bar(f, progress_bar, now, s.accent);
-    draw_actions(f, actions, &s.playback.now, &s.playback.queue, s.accent)
-}
-
-fn draw_cover_art(f: &mut Frame, area: Rect, s: &AppState) {
-    let thumb = s.playback.now.track.as_ref().map(|t| t.thumb.as_str());
-    let art = s
-        .playback
+/// the loaded cover, if it belongs to the current track
+fn cover_art<'a>(s: &'a AppState, track: &Track) -> Option<&'a RgbImage> {
+    s.playback
         .cover
         .as_ref()
-        .filter(|c| Some(c.thumb.as_str()) == thumb)
-        .and_then(|c| c.art.as_ref());
-    let Some(art) = art else {
-        let centered_art = area.centered(Constraint::Fill(1), Constraint::Length(1));
-        f.render_widget(
-            Paragraph::new("No cover art available").centered(),
-            centered_art,
-        );
-        return;
-    };
-    // a terminal cell is about twice as tall as it is wide, so a square takes half as many rows
-    let side = area.width.min(area.height.saturating_mul(2)) & !1;
-    let square = area.centered(Constraint::Length(side), Constraint::Length(side / 2));
-    f.render_widget(CoverArt(art), square);
+        .filter(|c| c.thumb == track.thumb)
+        .and_then(|c| c.art.as_ref())
 }
 
 /// pixelates the image into cells using half blocks: each cell shows two stacked pixels,
@@ -169,105 +139,77 @@ impl Widget for CoverArt<'_> {
     }
 }
 
-fn draw_info(f: &mut Frame, area: Rect, now: &NowPlaying) {
-    let [track_and_album, artist] =
-        Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
-
-    let (track_text, album_and_artist_text) = match &now.track {
-        None => (String::new(), String::new()),
-        Some(t) => {
-            if now.buffering {
-                (String::from(" buffering…"), String::new())
-            } else {
-                (
-                    t.title.to_owned(),
-                    format!("{} · {}", t.parent_title, t.grandparent_title.clone()),
-                )
-            }
-        }
+/// title, artist and album, progress and status, shared by both player views
+fn info_lines(s: &AppState, width: usize) -> Vec<Line<'static>> {
+    let now = &s.playback.now;
+    let Some(track) = &now.track else {
+        return vec![Line::raw("■ not playing")];
     };
 
-    f.render_widget(
-        Paragraph::new(track_text).centered().bold(),
-        track_and_album,
-    );
-    f.render_widget(Paragraph::new(album_and_artist_text).centered(), artist);
+    let artist_album: Vec<&str> = [&track.grandparent_title, &track.parent_title]
+        .into_iter()
+        .map(String::as_str)
+        .filter(|p| !p.is_empty())
+        .collect();
+
+    vec![
+        Line::styled(
+            fit(
+                &track.title,
+                if now.buffering { "buffering…" } else { "" },
+                width,
+            ),
+            Modifier::BOLD,
+        ),
+        Line::raw(truncate(&artist_album.join(" — "), width)),
+        progress_line(now, track, width, s.accent),
+        status_line(s),
+    ]
 }
 
-fn draw_progress_bar(f: &mut Frame, area: Rect, now: &NowPlaying, accent: Color) {
-    let [time_stamp, bar] = Layout::horizontal([Constraint::Length(11), Constraint::Min(10)])
-        .spacing(1)
-        .areas(area);
-
-    let width = bar.width as usize;
-    let duration = now.track.as_ref().and_then(|t| t.duration_ms);
-
-    let bar_spans = match duration {
-        Some(d) if d > 0 && now.track.is_some() && width >= 5 => {
-            let filled = ((now.position_ms.min(d) as f64 / d as f64) * width as f64) as usize;
-            vec![
-                Span::styled("━".repeat(filled), Style::new().fg(accent)),
-                Span::raw("━".repeat(width - filled)),
-            ]
+fn progress_line(now: &NowPlaying, track: &Track, width: usize, accent: Color) -> Line<'static> {
+    let icon = if now.paused { "‖" } else { "▶" };
+    let left = format!("{icon} {} ", crate::fmt_ms(now.position_ms));
+    let right = track
+        .duration_ms
+        .map_or(String::new(), |d| format!(" {}", crate::fmt_ms(d)));
+    let bar_width = width.saturating_sub(left.width() + right.width());
+    let filled = match track.duration_ms {
+        Some(d) if d > 0 => {
+            ((now.position_ms.min(d) as f64 / d as f64) * bar_width as f64) as usize
         }
-        _ => vec![],
+        _ => 0,
     };
-    let time = format!(
-        "{} / {}",
-        crate::fmt_ms(now.position_ms),
-        now.track
-            .as_ref()
-            .and_then(|t| t.duration_ms)
-            .map_or(crate::fmt_ms(0), crate::fmt_ms)
-    );
-    f.render_widget(time, time_stamp);
-    f.render_widget(Line::from(bar_spans), bar);
-}
-
-fn draw_actions(f: &mut Frame, area: Rect, now: &NowPlaying, queue: &Queue, accent: Color) {
-    let centered_area = area.centered_horizontally(Constraint::Max(6));
-    let [shuffle, play_status, repeat] = Layout::horizontal([
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Min(1),
+    Line::from(vec![
+        Span::raw(left),
+        Span::styled("━".repeat(filled), accent),
+        Span::raw("─".repeat(bar_width - filled)),
+        Span::raw(right),
     ])
-    .spacing(1)
-    .areas(centered_area);
-
-    let play_status_icon = match &now.track {
-        None => "",
-        Some(_) => {
-            if now.paused {
-                "‖"
-            } else {
-                "▶"
-            }
-        }
-    };
-
-    let (repeat_icon, repeat_active) = match queue.repeat {
-        Repeat::Off => ("↻", false),
-        Repeat::All => ("↻", true),
-        Repeat::One => ("↻1", true),
-    };
-
-    f.render_widget(action_styling("⇄", accent, queue.shuffle), shuffle);
-    f.render_widget(Line::raw(play_status_icon), play_status);
-    f.render_widget(action_styling(repeat_icon, accent, repeat_active), repeat);
-
-    let volume = format!("♪ {:.0}%", now.volume * 100.0);
-    let volume_width = volume.width() as u16;
-    if area.right().saturating_sub(volume_width) >= centered_area.right() + 2 {
-        let [_, volume_area] =
-            Layout::horizontal([Constraint::Fill(1), Constraint::Length(volume_width)]).areas(area);
-        f.render_widget(Line::raw(volume).right_aligned(), volume_area);
-    }
 }
 
-fn action_styling(content: &str, accent: Color, active: bool) -> Line<'_> {
-    if active {
-        Line::styled(content, Style::new().fg(accent).bold())
-    } else {
-        Line::raw(content)
+fn status_line(s: &AppState) -> Line<'static> {
+    let queue = &s.playback.queue;
+    let style = |active: bool| match active {
+        true => Style::new().fg(s.accent).bold(),
+        false => Style::new().fg(Color::DarkGray),
+    };
+    let repeat = match queue.repeat {
+        Repeat::Off => "repeat off",
+        Repeat::All => "repeat all",
+        Repeat::One => "repeat one",
+    };
+    let mut spans = vec![
+        Span::styled("shuffle", style(queue.shuffle)),
+        Span::raw(" · "),
+        Span::styled(repeat, style(queue.repeat != Repeat::Off)),
+        Span::raw(format!(" · vol {:.0}%", s.playback.now.volume * 100.0)),
+    ];
+    if s.debug_line {
+        spans.push(Span::raw(format!(
+            " · rss {:.1} MB",
+            crate::rss_kb() as f64 / 1024.0
+        )));
     }
+    Line::from(spans)
 }
