@@ -9,15 +9,10 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::now_playing::NowPlaying;
 use crate::app::queue::{Queue, Repeat};
-use crate::app::state::Focus::Player;
-use crate::app::state::{AppState, Focus};
+use crate::app::state::AppState;
 use crate::ui::string_formatting::fit;
 
-fn player_title(focus: &Focus, accent: Color) -> Vec<Span<'static>> {
-    let action = match focus {
-        Player => "minimize",
-        _ => "maximize",
-    };
+fn player_title(action: &str, accent: Color) -> Vec<Span<'static>> {
     vec![
         Span::raw(" Player <"),
         Span::styled("m", Style::new().fg(accent).add_modifier(Modifier::BOLD)),
@@ -26,7 +21,7 @@ fn player_title(focus: &Focus, accent: Color) -> Vec<Span<'static>> {
 }
 
 pub fn draw_minimized_player(f: &mut Frame, s: &AppState, area: Rect) {
-    let block = Block::bordered().title(player_title(&s.focus, s.accent));
+    let block = Block::bordered().title(player_title("maximize", s.accent));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let width = inner.width as usize;
@@ -88,7 +83,7 @@ pub fn draw_minimized_player(f: &mut Frame, s: &AppState, area: Rect) {
 }
 
 pub fn draw_maximized_player(f: &mut Frame, s: &AppState, area: Rect) {
-    let block = Block::bordered().title(player_title(&s.focus, s.accent));
+    let block = Block::bordered().title(player_title("minimize", s.accent));
     f.render_widget(&block, area);
 
     match &s.now.track {

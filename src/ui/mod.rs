@@ -8,8 +8,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::keys::{BINDINGS, key_name};
 use crate::app::now_playing::NowPlaying;
 use crate::app::queue::Queue;
-use crate::app::state::Focus::Player;
-use crate::app::state::{AppState, Focus, Items, ListKind, SECTIONS, SearchItem, View};
+use crate::app::state::{
+    AppState, Focus, Items, ListKind, Modal, SECTIONS, Screen, SearchItem, View,
+};
 use crate::plex::models::{Album, Artist, Track};
 use crate::ui::help_bar::draw_help_bar;
 use crate::ui::player::{draw_maximized_player, draw_minimized_player};
@@ -25,13 +26,13 @@ pub fn draw(f: &mut Frame, s: &mut AppState) {
     let [main, help_bar] =
         Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(f.area());
 
-    match s.focus {
-        Player => draw_maximized_player(f, s, main),
-        _ => draw_minimized_player_layout(f, s, main),
+    match s.screen {
+        Screen::Player => draw_maximized_player(f, s, main),
+        Screen::Browse(_) => draw_minimized_player_layout(f, s, main),
     }
 
     draw_help_bar(f, s, help_bar);
-    if s.help {
+    if s.modal == Some(Modal::Help) {
         draw_help(f);
     }
 }
@@ -64,9 +65,10 @@ fn border_style(focused: bool, accent: Color) -> Style {
 }
 
 fn draw_sidebar(f: &mut Frame, s: &AppState, area: Rect) {
+    let focused = s.screen == Screen::Browse(Focus::Sidebar);
     let block = Block::bordered()
         .title(" Library ")
-        .border_style(border_style(s.focus == Focus::Sidebar, s.accent));
+        .border_style(border_style(focused, s.accent));
     let inner = block.inner(area);
     f.render_widget(block, area);
     let width = inner.width as usize;
@@ -82,7 +84,7 @@ fn draw_sidebar(f: &mut Frame, s: &AppState, area: Rect) {
             };
             let line = Line::raw(fit(&text, "", width));
             if selected {
-                line.style(selected_style(s.focus == Focus::Sidebar, s.accent))
+                line.style(selected_style(focused, s.accent))
             } else {
                 line
             }
@@ -101,11 +103,13 @@ fn breadcrumb(stack: &[View]) -> String {
 
 fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
     let title_width = (area.width as usize).saturating_sub(16);
-    let crumb = match &s.search_input {
-        Some(q) => truncate_left(&format!("Search: {q}▏"), title_width),
-        None => truncate_left(&breadcrumb(&s.stack), title_width),
+    let search = match &s.modal {
+        Some(Modal::Search(q)) => Some(format!("Search: {q}▏")),
+        _ => None,
     };
-    let focused = s.focus == Focus::List;
+    let searching = search.is_some();
+    let crumb = truncate_left(&search.unwrap_or_else(|| breadcrumb(&s.stack)), title_width);
+    let focused = s.screen == Screen::Browse(Focus::List);
     let Some(v) = s.stack.last_mut() else { return };
     let is_queue = matches!(v.kind, ListKind::Queue);
 
@@ -136,9 +140,7 @@ fn draw_list(f: &mut Frame, s: &mut AppState, area: Rect) {
             "loading…"
         } else {
             match v.kind {
-                ListKind::Search if s.search_input.is_some() => {
-                    "type a query, Enter to search, Esc to cancel"
-                }
+                ListKind::Search if searching => "type a query, Enter to search, Esc to cancel",
                 ListKind::Search => "press / to search",
                 ListKind::Queue => "queue is empty",
                 _ => "nothing here",

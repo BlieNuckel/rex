@@ -14,7 +14,6 @@ use crate::app::keys::{
     SEARCH_INPUT_KEYS, SIDEBAR_KEYS,
 };
 use crate::app::now_playing::NowPlaying;
-use crate::app::state::Focus::Player;
 use crate::audio::player::PlayerCmd;
 use crate::plex::api::SearchResults;
 use crate::plex::models::{Album, Artist, Playlist, Track};
@@ -23,6 +22,25 @@ const PREFETCH_MARGIN: usize = 50;
 const MESSAGE_TTL: Duration = Duration::from_secs(5);
 
 pub const SECTIONS: [&str; 5] = ["Artists", "Albums", "Playlists", "Search", "Queue"];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Focus {
+    Sidebar,
+    List,
+}
+
+/// overlay that takes all input until closed
+#[derive(Debug, PartialEq, Eq)]
+pub enum Modal {
+    Search(String),
+    Help,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Screen {
+    Browse(Focus),
+    Player,
+}
 
 #[derive(Debug, Clone)]
 pub enum ListKind {
@@ -97,14 +115,9 @@ pub struct Message {
     pub error: bool,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Focus {
-    Sidebar,
-    List,
-    Player,
-}
-
 pub struct AppState {
+    pub screen: Screen,
+    pub modal: Option<Modal>,
     pub(super) api: SyncSender<ApiRequest>,
     pub(super) player: SyncSender<PlayerCmd>,
     next_id: u64,
@@ -122,23 +135,21 @@ pub struct AppState {
     pub media_integration_dirty: bool,
     /// new server address found by rediscovery, saved to the config on exit
     pub server_url: Option<String>,
-    pub focus: Focus,
     pub section: usize,
     pub stack: Vec<View>,
-    pub help: bool,
     pub debug_line: bool,
     /// colour for focus, selection and highlights, from `accent_color` in the config
     pub accent: Color,
     pub message: Option<Message>,
     pub list_height: usize,
-    /// text being typed after `/`, `Some` while the search prompt is open
-    pub search_input: Option<String>,
     pub quit: bool,
 }
 
 impl AppState {
     pub fn new(api: SyncSender<ApiRequest>, player: SyncSender<PlayerCmd>, volume: f32) -> Self {
         let mut s = Self {
+            screen: Screen::Browse(Focus::List),
+            modal: None,
             api,
             player,
             next_id: 0,
@@ -155,15 +166,12 @@ impl AppState {
             reporter: Reporter::default(),
             media_integration_dirty: false,
             server_url: None,
-            focus: Focus::List,
             section: 0,
             stack: Vec::new(),
-            help: false,
             debug_line: false,
             accent: Color::Cyan,
             message: None,
             list_height: 10,
-            search_input: None,
             quit: false,
         };
         s.set_section(0);
@@ -356,35 +364,27 @@ impl AppState {
     }
 
     pub fn get_supported_actions(&self) -> Vec<Action> {
-        if self.search_input.is_some() {
-            return SEARCH_INPUT_KEYS.to_vec();
-        }
-        if self.help {
-            return HELP_KEYS.to_vec();
-        }
-
-        match self.focus {
-            Focus::Sidebar => [SIDEBAR_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS].concat(),
-            Focus::List => match self.view() {
-                Some(v) => match v.kind {
-                    ListKind::Queue => [QUEUE_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS].concat(),
-                    _ => [LIST_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS].concat(),
-                },
-                None => vec![],
+        let groups: &[&[Action]] = match (&self.modal, self.screen) {
+            (Some(Modal::Search(_)), _) => &[SEARCH_INPUT_KEYS],
+            (Some(Modal::Help), _) => &[HELP_KEYS],
+            (None, Screen::Player) => &[MAXIMIZED_PLAYER_KEYS, GLOBAL_PLAYER_KEYS],
+            (None, Screen::Browse(Focus::Sidebar)) => &[SIDEBAR_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS],
+            (None, Screen::Browse(Focus::List)) => match self.view().map(|v| &v.kind) {
+                Some(ListKind::Queue) => &[QUEUE_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS],
+                Some(_) => &[LIST_KEYS, NAV_KEYS, GLOBAL_PLAYER_KEYS],
+                None => &[],
             },
-            Focus::Player => [MAXIMIZED_PLAYER_KEYS, GLOBAL_PLAYER_KEYS].concat(),
-        }
+        };
+        groups.concat()
     }
 
     pub fn on_action(&mut self, action: Action) {
-        if self.help {
-            if matches!(action, Action::Help | Action::Quit | Action::Back) {
-                self.help = false;
-            }
+        if !self.get_supported_actions().contains(&action) {
             return;
         }
-
-        if !self.get_supported_actions().contains(&action) {
+        // for now any key the help modal accepts closes it
+        if self.modal == Some(Modal::Help) {
+            self.modal = None;
             return;
         }
 
@@ -399,15 +399,16 @@ impl AppState {
             Action::Open => self.open(),
             Action::Back => self.back(),
             Action::ToggleFocus => {
-                self.focus = match self.focus {
-                    Focus::Sidebar => Focus::List,
-                    Focus::List => Focus::Sidebar,
-                    Focus::Player => Focus::Player,
+                if let Screen::Browse(f) = &mut self.screen {
+                    *f = match f {
+                        Focus::Sidebar => Focus::List,
+                        Focus::List => Focus::Sidebar,
+                    };
                 }
             }
             Action::Jump(i) => {
                 self.set_section(i);
-                self.focus = Focus::List;
+                self.screen = Screen::Browse(Focus::List);
             }
             Action::PlayPause => self.toggle_pause(),
             Action::Next => self.skip(),
@@ -425,32 +426,24 @@ impl AppState {
             Action::MoveUp => self.queue_edit(|s, i| s.move_at(i, false)),
             Action::Clear => self.queue_edit(|s, _| s.clear_queue()),
             Action::Search => self.open_search(),
-            Action::Help => self.help = true,
+            Action::Help => self.modal = Some(Modal::Help),
             Action::DebugLine => self.debug_line = !self.debug_line,
             Action::Quit => self.request_quit(),
-            Action::Play => self.play(),
-            Action::TogglePlayerFocus => {
-                self.focus = if matches!(self.focus, Player) {
-                    Focus::List
-                } else {
-                    Focus::Player
+            Action::Play => self.add_selected(AddMode::PlayFromStart),
+            Action::TogglePlayer => {
+                self.screen = match self.screen {
+                    Screen::Browse(_) => Screen::Player,
+                    Screen::Player => Screen::Browse(Focus::List),
                 }
             }
-            // routed through on_search_key while the prompt is open, never via lookup
+            // routed through on_search_key while the search modal is open, never via lookup
             Action::SearchSubmit | Action::SearchCancel => {}
         }
     }
 
-    fn play(&mut self) {
-        if self.focus == Focus::Sidebar {
-            return;
-        }
-        self.add_selected(AddMode::PlayFromStart);
-    }
-
     fn move_by(&mut self, delta: isize) {
-        match self.focus {
-            Focus::Sidebar => {
+        match self.screen {
+            Screen::Browse(Focus::Sidebar) => {
                 let i = self
                     .section
                     .saturating_add_signed(delta)
@@ -459,7 +452,7 @@ impl AppState {
                     self.set_section(i);
                 }
             }
-            Focus::List => {
+            Screen::Browse(Focus::List) => {
                 let last = self.list_len().saturating_sub(1);
                 let Some(v) = self.view_mut() else { return };
                 v.selected = v.selected.saturating_add_signed(delta).min(last);
@@ -468,13 +461,13 @@ impl AppState {
                 }
                 self.ensure_loaded();
             }
-            Focus::Player => (),
+            Screen::Player => {}
         }
     }
 
     fn open(&mut self) {
-        if self.focus == Focus::Sidebar {
-            self.focus = Focus::List;
+        if self.screen == Screen::Browse(Focus::Sidebar) {
+            self.screen = Screen::Browse(Focus::List);
             return;
         }
         let Some(v) = self.view() else { return };
@@ -604,10 +597,10 @@ impl AppState {
     }
 
     fn back(&mut self) {
-        if self.focus == Focus::List && self.stack.len() > 1 {
+        if self.screen == Screen::Browse(Focus::List) && self.stack.len() > 1 {
             self.stack.pop();
         } else {
-            self.focus = Focus::Sidebar;
+            self.screen = Screen::Browse(Focus::Sidebar);
         }
     }
 }
@@ -635,20 +628,20 @@ impl AppState {
         }
         self.stack.truncate(1);
         self.section = 3;
-        self.focus = Focus::List;
-        self.search_input = Some(String::new());
+        self.screen = Screen::Browse(Focus::List);
+        self.modal = Some(Modal::Search(String::new()));
     }
 
-    /// keys typed while the search prompt is open
+    /// keys typed while the search modal is open
     pub fn on_search_key(&mut self, k: KeyEvent) {
-        let Some(input) = self.search_input.as_mut() else {
+        let Some(Modal::Search(input)) = &mut self.modal else {
             return;
         };
         match k.code {
-            KeyCode::Esc => self.search_input = None,
+            KeyCode::Esc => self.modal = None,
             KeyCode::Enter => {
                 let query = input.trim().to_owned();
-                self.search_input = None;
+                self.modal = None;
                 if query.is_empty() {
                     return;
                 }

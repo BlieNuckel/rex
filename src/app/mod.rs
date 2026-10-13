@@ -23,7 +23,7 @@ use crate::plex::models::{Album, Artist, Page, Playlist, Track};
 use crate::plex::{PlexClient, auth};
 use reporting::Report;
 use souvlaki::MediaControlEvent;
-use state::{AppState, ListKind};
+use state::{AppState, ListKind, Modal};
 
 const API_WORKERS: usize = 2;
 const REPORT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -211,7 +211,7 @@ fn event_loop(
 fn handle(state: &mut AppState, ev: AppEvent) {
     match ev {
         AppEvent::Input(Event::Key(k)) if k.kind == KeyEventKind::Press => {
-            if state.search_input.is_some() {
+            if matches!(state.modal, Some(Modal::Search(_))) {
                 state.on_search_key(k);
             } else if let Some(action) = keys::lookup(k) {
                 state.on_action(action);
