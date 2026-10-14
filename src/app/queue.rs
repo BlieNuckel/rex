@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -74,13 +75,15 @@ impl Queue {
         if self.entries.is_empty() {
             return None;
         }
+        let index = positions(self.entries.iter().map(|e| e.id));
+        let unshuffled = self
+            .unshuffled
+            .iter()
+            .filter_map(|id| index.get(id).copied())
+            .collect();
         Some(SavedQueue {
             tracks: self.entries.iter().map(|e| e.track.clone()).collect(),
-            unshuffled: self
-                .unshuffled
-                .iter()
-                .filter_map(|&id| self.position(id))
-                .collect(),
+            unshuffled,
             current: self.current,
             position_ms,
             shuffle: self.shuffle,
@@ -212,9 +215,8 @@ impl Queue {
             self.shuffle_around_current();
         } else {
             let cur = self.current().map(|e| e.id);
-            let order = &self.unshuffled;
-            self.entries
-                .sort_by_key(|e| order.iter().position(|&id| id == e.id));
+            let order = positions(self.unshuffled.iter().copied());
+            self.entries.sort_by_key(|e| order.get(&e.id).copied());
             self.current = cur.and_then(|id| self.position(id));
         }
     }
@@ -258,4 +260,9 @@ impl Queue {
             c => Some(c - 1),
         }
     }
+}
+
+/// maps each id to its index in `ids`
+fn positions(ids: impl IntoIterator<Item = u64>) -> HashMap<u64, usize> {
+    ids.into_iter().enumerate().map(|(i, id)| (id, i)).collect()
 }
