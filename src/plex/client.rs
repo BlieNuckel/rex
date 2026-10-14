@@ -117,8 +117,8 @@ impl PlexClient {
             let mut req = self.headers(self.agent.get(self.url(path)), query);
             if let Some((start, size)) = range {
                 req = req
-                    .header("X-Plex-Container-Start", start.to_string())
-                    .header("X-Plex-Container-Size", size.to_string());
+                    .query("X-Plex-Container-Start", start.to_string())
+                    .query("X-Plex-Container-Size", size.to_string());
             }
             req.call().and_then(|mut r| r.body_mut().read_json::<T>())
         };
