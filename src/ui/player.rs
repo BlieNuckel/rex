@@ -8,11 +8,13 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Widget};
 use unicode_width::UnicodeWidthStr;
 
+use crate::app::browser::ListKind;
 use crate::app::now_playing::NowPlaying;
 use crate::app::queue::Repeat;
 use crate::app::state::AppState;
 use crate::plex::models::Track;
 use crate::ui::string_formatting::{fit, truncate};
+use crate::ui::track_row;
 
 fn player_title(action: &str, accent: Color) -> Vec<Span<'static>> {
     vec![
@@ -74,19 +76,14 @@ pub fn draw_maximized_player(f: &mut Frame, s: &AppState, area: Rect) {
         return;
     }
 
-    let mut lines = vec![Line::styled("up next", Color::DarkGray)];
+    let mut lines = vec![Line::styled("up next", Modifier::DIM)];
 
     lines.extend(
         queue.entries[next..]
             .iter()
             .map(|e| {
-                let t = &e.track;
-                let d = t.duration_ms.map_or(String::new(), crate::fmt_ms);
-                Line::raw(fit(
-                    &format!("{} — {}", t.title, t.grandparent_title),
-                    &d,
-                    width,
-                ))
+                let (left, right) = track_row(&ListKind::Queue, &e.track, false);
+                Line::raw(fit(&left, &right, width))
             })
             .take(list.height as usize - 1),
     );
@@ -192,7 +189,7 @@ fn status_line(s: &AppState) -> Line<'static> {
     let queue = &s.playback.queue;
     let style = |active: bool| match active {
         true => Style::new().fg(s.accent).bold(),
-        false => Style::new().fg(Color::DarkGray),
+        false => Style::new().add_modifier(Modifier::DIM),
     };
     let repeat = match queue.repeat {
         Repeat::Off => "repeat off",

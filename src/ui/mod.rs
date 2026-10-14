@@ -234,7 +234,7 @@ fn album_row(list_kind: &ListKind, a: &Album) -> (String, String) {
     (left, right)
 }
 
-fn track_row(list_kind: &ListKind, t: &Track, multi_disc: bool) -> (String, String) {
+pub(super) fn track_row(list_kind: &ListKind, t: &Track, multi_disc: bool) -> (String, String) {
     let left = match list_kind {
         ListKind::AlbumTracks(_) => {
             let n = t.index.map_or(String::new(), |n| n.to_string());
