@@ -1,7 +1,7 @@
 `rex` is a terminal music player for the music library on your Plex Media Server, built to stay small and fast!
 
-<img src="./images/one.png" width="250px" alt="image of player maximized"/>
-<img src="./images/two.png" width="250px" alt="image of player minimized"/>
+<img src="./images/one.png" alt="image of player maximized"/>
+<img src="./images/two.png" alt="image of player minimized"/>
 
 ## Installation
 
