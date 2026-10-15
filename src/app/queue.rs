@@ -137,11 +137,7 @@ impl Queue {
     pub fn replace(&mut self, tracks: Vec<Arc<Track>>, start: Option<usize>) {
         self.entries = self.make(tracks);
         self.unshuffled = self.entries.iter().map(|e| e.id).collect();
-        self.current = if let Some(s) = start {
-            (s < self.entries.len()).then_some(s)
-        } else {
-            None
-        };
+        self.current = start.filter(|&s| s < self.entries.len());
         if self.shuffle {
             self.shuffle_around_current();
         }
