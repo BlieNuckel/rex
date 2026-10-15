@@ -7,6 +7,12 @@
 
 There are a few packages available of this program for various linux flavours, just select one from the releases list.
 
+### Building from source
+
+```sh
+cargo install --path .                              # local playback only
+```
+
 ## Usage
 
 ```sh
