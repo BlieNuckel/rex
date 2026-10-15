@@ -2,6 +2,7 @@
 //! `PlayerCmd`/`PlayerEvent` contract as the local player
 
 mod caster;
+mod discover;
 mod io;
 
 use std::net::IpAddr;
@@ -17,8 +18,6 @@ use crate::backend::Channels;
 use crate::plex::PlexClient;
 use caster::Caster;
 
-/// Drop the sender and join the handle before exiting, or the device keeps playing
-// shortcut: nothing calls this until the tui can cast, drop the allow in that pr
 #[allow(dead_code)]
 pub fn spawn(plex: Arc<PlexClient>, ip: &str, volume: f32) -> Result<(Channels, JoinHandle<()>)> {
     let ip: IpAddr = ip
