@@ -7,6 +7,8 @@
 
 There are a few packages available of this program for various linux flavours, just select one from the releases list.
 
+If you are on macOS you can install it using homebrew: `brew install defaultdino/tap/rex`
+
 ### Building from source
 
 ```sh
