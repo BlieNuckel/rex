@@ -24,10 +24,12 @@ pub enum Focus {
 }
 
 /// overlay that takes all input until closed
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug)]
 pub enum Modal {
     Search(String),
     Help,
+    #[cfg(feature = "cast")]
+    Cast(super::cast::Picker),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -73,6 +75,9 @@ pub struct AppState {
     pub accent: Color,
     pub message: Option<Message>,
     pub quit: bool,
+    pub backend: u64,
+    #[cfg(feature = "cast")]
+    pub(super) cast: super::cast::CastState,
 }
 
 impl AppState {
@@ -81,11 +86,15 @@ impl AppState {
         player: SyncSender<PlayerCmd>,
         volume: f32,
         saved: Option<SavedQueue>,
+        #[cfg(feature = "cast")] cast: super::cast::CastState,
     ) -> Self {
         Self {
             screen: Screen::Browse(Focus::List),
             modal: None,
             browser: Browser::new(api.clone()),
+            #[cfg(feature = "cast")]
+            cast,
+            backend: 0,
             playback: Playback::new(api, player, volume, saved),
             quit_armed: None,
             server_url: None,
@@ -140,6 +149,8 @@ impl AppState {
         let groups: &[&[Action]] = match (&self.modal, self.screen) {
             (Some(Modal::Search(_)), _) => &[SEARCH_INPUT_KEYS],
             (Some(Modal::Help), _) => &[HELP_KEYS],
+            #[cfg(feature = "cast")]
+            (Some(Modal::Cast(_)), _) => &[keys::CAST_KEYS],
             (None, Screen::Player) => &[MAXIMIZED_PLAYER_KEYS, GLOBAL_PLAYER_KEYS],
             (None, Screen::Browse(Focus::Sidebar)) => &[NAV_KEYS, GLOBAL_PLAYER_KEYS],
             (None, Screen::Browse(Focus::List)) => match self.browser.view().map(|v| &v.kind) {
@@ -164,9 +175,13 @@ impl AppState {
             return;
         }
         // every key the help modal accepts closes it
-        if self.modal == Some(Modal::Help) {
+        if matches!(self.modal, Some(Modal::Help)) {
             self.modal = None;
             return;
+        }
+        #[cfg(feature = "cast")]
+        if matches!(self.modal, Some(Modal::Cast(_))) {
+            return self.on_cast_key(action);
         }
 
         let half = (self.browser.list_height / 2).max(1) as isize;
@@ -229,6 +244,8 @@ impl AppState {
             }
             // routed through on_search_key while the search modal is open, never via lookup
             Action::SearchSubmit | Action::SearchCancel => {}
+            #[cfg(feature = "cast")]
+            Action::Cast => self.open_cast_picker(),
         }
     }
 

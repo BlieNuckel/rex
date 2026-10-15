@@ -15,18 +15,16 @@ pub struct Device {
     pub ip: IpAddr,
 }
 
-/// Collects the devices that answer within `wait`, sorted by name
+/// Calls `found` once for each device that answers within `wait`
 // shortcut: ipv4 on the default route's interface only, query each interface if devices go missing
-// shortcut: nothing calls this until the tui can cast, drop the allow in that pr
-#[allow(dead_code)]
-pub fn discover(wait: Duration) -> io::Result<Vec<Device>> {
+pub fn discover(wait: Duration, mut found: impl FnMut(Device)) -> io::Result<()> {
     let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0))?;
     socket.send_to(&query(), MDNS)?;
 
     let deadline = Instant::now() + wait;
-    let mut devices: Vec<Device> = Vec::new();
+    let mut seen: Vec<IpAddr> = Vec::new();
     let mut buf = [0; 9000];
-    
+
     while let Some(left) = deadline
         .checked_duration_since(Instant::now())
         .filter(|d| !d.is_zero())
@@ -38,16 +36,16 @@ pub fn discover(wait: Duration) -> io::Result<Vec<Device>> {
             Err(e) => return Err(e),
         };
         if let Some(name) = parse(&buf[..len])
-            && !devices.iter().any(|d| d.ip == from.ip())
+            && !seen.contains(&from.ip())
         {
-            devices.push(Device {
+            seen.push(from.ip());
+            found(Device {
                 name,
                 ip: from.ip(),
             });
         }
     }
-    devices.sort_by(|a, b| a.name.cmp(&b.name));
-    Ok(devices)
+    Ok(())
 }
 
 fn query() -> Vec<u8> {
@@ -67,13 +65,13 @@ fn parse(p: &[u8]) -> Option<String> {
         .map(|i| u16_at(p, i).map(usize::from))
         .sum::<Option<usize>>()?;
     let mut i = 12;
-    
+
     for _ in 0..questions {
         i = name_at(p, i)?.1 + 4;
     }
-    
+
     let (mut ports, mut names) = (Vec::new(), Vec::new());
-    
+
     for _ in 0..records {
         let (owner, at) = name_at(p, i)?;
         let kind = u16_at(p, at)?;
@@ -86,7 +84,7 @@ fn parse(p: &[u8]) -> Option<String> {
         }
         i = at + 10 + len;
     }
-    
+
     names
         .into_iter()
         .find(|(owner, _)| {
@@ -104,8 +102,9 @@ fn u16_at(p: &[u8], i: usize) -> Option<u16> {
 fn name_at(p: &[u8], mut i: usize) -> Option<(String, usize)> {
     let mut name = String::new();
     let mut end = None;
-   
-    for _ in 0..128 { // prevent hostile packet loop
+
+    for _ in 0..128 {
+        // prevent hostile packet loop
         let len = usize::from(*p.get(i)?);
         if len & 0xc0 == 0xc0 {
             end.get_or_insert(i + 2);
@@ -120,7 +119,7 @@ fn name_at(p: &[u8], mut i: usize) -> Option<(String, usize)> {
             i += 1 + len;
         }
     }
-    
+
     None
 }
 

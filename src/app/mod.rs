@@ -1,4 +1,6 @@
 pub mod browser;
+#[cfg(feature = "cast")]
+pub mod cast;
 pub mod keys;
 pub mod now_playing;
 mod playback;
@@ -17,7 +19,7 @@ use ratatui::crossterm::event::{self, Event, KeyEventKind};
 use tracing::warn;
 
 use crate::audio::player;
-use crate::backend::{PlayerCmd, PlayerEvent};
+use crate::backend::PlayerEvent;
 use crate::config::{self, SavedState};
 use crate::media_controls::{MediaControls, run_main_loop};
 use crate::plex::api::SearchResults;
@@ -93,12 +95,14 @@ pub enum AppEvent {
         thumb: String,
         result: Result<RgbImage, String>,
     },
-    Player(PlayerEvent),
+    Player(u64, PlayerEvent),
     MediaControl(MediaControlEvent),
     /// SIGTERM, SIGINT or SIGHUP
     Signal,
     /// the server answered again at this address after rediscovery
     Reconnected(String),
+    #[cfg(feature = "cast")]
+    Cast(cast::CastEvent),
 }
 
 pub fn run(client: Arc<PlexClient>, saved: &mut SavedState, accent: Option<&str>) -> Result<()> {
@@ -114,24 +118,32 @@ pub fn run(client: Arc<PlexClient>, saved: &mut SavedState, accent: Option<&str>
     let (player_tx, player_rx) = player::spawn(client.clone(), cache, saved.volume)?;
 
     spawn_api_workers(client.clone(), section, saved, api_rx, tx.clone())?;
-    spawn_forwarder(player_rx, tx.clone())?;
+    spawn_forwarder(player_rx, tx.clone(), 0)?;
 
     #[cfg(unix)]
     spawn_signals(tx.clone())?;
 
     let media_controls = MediaControls::start(tx.clone());
+    #[cfg(feature = "cast")]
+    let cast = cast::CastState::new(tx.clone(), client.clone(), player_tx.clone());
     spawn_input(tx)?;
 
-    let mut app = AppState::new(api_tx, player_tx.clone(), saved.volume, saved.queue.take());
+    let mut app = AppState::new(
+        api_tx,
+        player_tx,
+        saved.volume,
+        saved.queue.take(),
+        #[cfg(feature = "cast")]
+        cast,
+    );
     app.set_accent(accent);
-    spawn_tui(rx, app, player_tx, media_controls, &client, saved)
+    spawn_tui(rx, app, media_controls, &client, saved)
 }
 
 /// runs the ui on a scoped thread while the main thread runs the platform run loop
 fn spawn_tui(
     rx: Receiver<AppEvent>,
     mut state: AppState,
-    player_tx: SyncSender<PlayerCmd>,
     mut media_controls: Option<MediaControls>,
     client: &PlexClient,
     saved: &mut SavedState,
@@ -151,7 +163,7 @@ fn spawn_tui(
                 );
                 ratatui::restore();
 
-                shutdown(&mut state, &player_tx, client, saved)?;
+                shutdown(&mut state, client, saved)?;
                 result
             })?;
         run_main_loop(&tui);
@@ -160,17 +172,20 @@ fn spawn_tui(
 }
 
 /// stops playback, sends the final playback reports and saves what the session changed
-fn shutdown(
-    state: &mut AppState,
-    player: &SyncSender<PlayerCmd>,
-    client: &PlexClient,
-    saved: &mut SavedState,
-) -> Result<()> {
-    let _ = player.send(PlayerCmd::Stop);
+fn shutdown(state: &mut AppState, client: &PlexClient, saved: &mut SavedState) -> Result<()> {
+    state.playback.stop_player();
+    #[cfg(feature = "cast")]
+    let cast = state.close_cast();
     for r in state.playback.reporter.stopped() {
         send_report(client, &r);
     }
+    let result = save_session(state, saved);
+    #[cfg(feature = "cast")]
+    cast::wait_closed(cast);
+    result
+}
 
+fn save_session(state: &mut AppState, saved: &mut SavedState) -> Result<()> {
     let disk = SavedState::read()?;
     let same_library = disk
         .as_ref()
@@ -248,13 +263,16 @@ fn handle(state: &mut AppState, ev: AppEvent) {
             }
         }
         AppEvent::Cover { thumb, result } => state.playback.on_cover(thumb, result),
-        AppEvent::Player(ev) => state.playback.on_player(ev),
+        AppEvent::Player(id, ev) if id == state.backend => state.playback.on_player(ev),
+        AppEvent::Player(..) => {}
         AppEvent::MediaControl(MediaControlEvent::Quit) | AppEvent::Signal => state.quit = true,
         AppEvent::MediaControl(ev) => state.playback.on_media_control(ev),
         AppEvent::Reconnected(url) => {
             state.info(format!("reconnected to the server at {url}"));
             state.server_url = Some(url);
         }
+        #[cfg(feature = "cast")]
+        AppEvent::Cast(ev) => state.on_cast_event(ev),
     }
     if let Some(m) = state.playback.notice.take() {
         state.message = Some(m);
@@ -310,12 +328,12 @@ fn send_report(c: &PlexClient, r: &Report) {
     }
 }
 
-fn spawn_forwarder(rx: Receiver<PlayerEvent>, tx: SyncSender<AppEvent>) -> Result<()> {
+fn spawn_forwarder(rx: Receiver<PlayerEvent>, tx: SyncSender<AppEvent>, id: u64) -> Result<()> {
     thread::Builder::new()
         .name("player-events".into())
         .spawn(move || {
             for ev in rx {
-                if tx.send(AppEvent::Player(ev)).is_err() {
+                if tx.send(AppEvent::Player(id, ev)).is_err() {
                     break;
                 }
             }

@@ -107,6 +107,35 @@ impl Playback {
         }
     }
 
+    pub fn stop_player(&self) {
+        let _ = self.player.send(PlayerCmd::Stop);
+    }
+
+    #[cfg(feature = "cast")]
+    pub fn set_player(&mut self, player: SyncSender<PlayerCmd>) {
+        self.player = player;
+    }
+
+    #[cfg(feature = "cast")]
+    pub fn switch_player(&mut self, player: SyncSender<PlayerCmd>) {
+        self.send(PlayerCmd::Stop);
+        self.player = player;
+        self.send(PlayerCmd::SetVolume(self.now.volume));
+        if self.now.track.is_none() || self.queue.current.is_none() {
+            return;
+        }
+        let playing = !self.now.paused && self.resume_ms.is_none();
+        self.resume_ms = Some(self.resume_ms.unwrap_or(self.now.position_ms));
+        self.now.paused = true;
+        self.now.buffering = false;
+        self.loading = None;
+        self.enqueued = None;
+        self.seek_on_start = None;
+        if playing {
+            self.toggle_pause();
+        }
+    }
+
     /// one request per event so a worker sends them in order (e.g. stopped before playing)
     fn report(&self, reports: Vec<Report>) {
         if !reports.is_empty() && self.api.try_send(ApiRequest::Report(reports)).is_err() {
