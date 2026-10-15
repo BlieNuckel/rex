@@ -38,6 +38,7 @@ pub enum AddMode {
     /// replace the queue with the fetched tracks and start at this rating key
     PlayFrom(String),
     PlayFromStart,
+    PlayShuffled,
 }
 
 pub enum TrackSource {
