@@ -222,7 +222,7 @@ impl Queue {
     }
 
     fn shuffle_around_current(&mut self) {
-        let start = if let Some(c) = self.current { c + 1 } else { 0 };
+        let start = self.current.map_or(0, |c| c + 1);
         for i in (start + 1..self.entries.len()).rev() {
             let j = start + (self.rand() % (i - start + 1) as u64) as usize;
             self.entries.swap(i, j);
