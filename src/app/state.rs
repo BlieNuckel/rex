@@ -235,7 +235,9 @@ impl AppState {
             Action::Help => self.modal = Some(Modal::Help),
             Action::DebugLine => self.debug_line = !self.debug_line,
             Action::Quit => self.request_quit(),
+            // Play is always shuffled when playing on Artist level
             Action::Play => self.add_selected(AddMode::PlayFromStart),
+            Action::PlayShuffle => self.add_selected(AddMode::PlayShuffled),
             Action::TogglePlayer => {
                 self.screen = match self.screen {
                     Screen::Browse(_) => Screen::Player,

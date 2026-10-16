@@ -168,7 +168,7 @@ impl Playback {
 
     /// replaces the queue with `tracks` and plays from `start`
     pub fn play_tracks(&mut self, tracks: Vec<Arc<Track>>, start: usize) {
-        self.queue.replace(tracks, start);
+        self.queue.replace(tracks, Some(start));
         self.play_index(self.queue.current.unwrap_or(0));
     }
 
@@ -429,7 +429,12 @@ impl Playback {
             AddMode::Append => self.queue.append(tracks),
             AddMode::Next => self.queue.play_next(tracks),
             AddMode::PlayFromStart => {
-                self.queue.replace(tracks, 0);
+                self.queue.replace(tracks, Some(0));
+                return self.play_index(0);
+            }
+            AddMode::PlayShuffled => {
+                self.queue.set_shuffle(true);
+                self.queue.replace(tracks, None);
                 return self.play_index(0);
             }
             AddMode::PlayFrom(rk) => {
