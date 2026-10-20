@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use super::keys::Action;
 use super::state::{AppState, Modal};
-use super::{AppEvent, spawn_forwarder};
+use super::{AppEvent, forward};
 use crate::backend::PlayerCmd;
 use crate::cast::Device;
 use crate::plex::PlexClient;
@@ -136,19 +136,22 @@ impl AppState {
 
     fn cast_to(&mut self, name: String, ip: IpAddr) {
         self.cast.request += 1;
-        let (id, volume) = (self.cast.request, self.playback.now.volume);
+        let id = self.cast.request;
         let (events, plex) = (self.cast.events.clone(), self.cast.plex.clone());
         let label = name.clone();
         let spawned = thread::Builder::new()
             .name("cast-connect".into())
             .spawn(move || {
-                let result = crate::cast::spawn(plex, ip, volume)
-                    .and_then(|((player, rx), done)| {
-                        spawn_forwarder(rx, events.clone(), id)?;
-                        Ok((player, done))
-                    })
-                    .map_err(|e| format!("{e:#}"));
+                let (result, rx) = match crate::cast::spawn(plex, ip) {
+                    Ok(((player, rx), done)) => (Ok((player, done)), Some(rx)),
+                    Err(e) => (Err(format!("{e:#}")), None),
+                };
+                // the app drops a session's events until it has switched to it,
+                // so they must not overtake Connected
                 let _ = events.send(AppEvent::Cast(CastEvent::Connected { id, name, result }));
+                if let Some(rx) = rx {
+                    forward(rx, events, id);
+                }
             });
         match spawned {
             Ok(_) => self.info(format!("connecting to {label}…")),
@@ -167,7 +170,7 @@ impl AppState {
         }
         match result {
             Ok((player, done)) => {
-                self.playback.switch_player(player);
+                self.playback.switch_player(player, true);
                 self.cast.session = Some(done);
                 self.backend = id;
                 self.info(format!("casting to {name}"));
@@ -181,7 +184,7 @@ impl AppState {
         if self.cast.session.take().is_none() {
             return;
         }
-        self.playback.switch_player(self.cast.local.clone());
+        self.playback.switch_player(self.cast.local.clone(), false);
         self.backend = 0;
         self.info("playing on this computer".into());
     }

@@ -332,14 +332,16 @@ fn send_report(c: &PlexClient, r: &Report) {
 fn spawn_forwarder(rx: Receiver<PlayerEvent>, tx: SyncSender<AppEvent>, id: u64) -> Result<()> {
     thread::Builder::new()
         .name("player-events".into())
-        .spawn(move || {
-            for ev in rx {
-                if tx.send(AppEvent::Player(id, ev)).is_err() {
-                    break;
-                }
-            }
-        })?;
+        .spawn(move || forward(rx, tx, id))?;
     Ok(())
+}
+
+fn forward(rx: Receiver<PlayerEvent>, tx: SyncSender<AppEvent>, id: u64) {
+    for ev in rx {
+        if tx.send(AppEvent::Player(id, ev)).is_err() {
+            break;
+        }
+    }
 }
 
 fn spawn_input(tx: SyncSender<AppEvent>) -> Result<()> {
