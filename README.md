@@ -13,6 +13,9 @@ If you are on macOS you can install it using homebrew: `brew install defaultdino
 
 ```sh
 cargo install --path .                              # local playback only
+
+# To install **with** castv2 functionality
+cargo install --features cast --path .
 ```
 
 ## Usage
