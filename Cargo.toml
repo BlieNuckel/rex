@@ -1,6 +1,6 @@
 [package]
 name = "rexamp"
-version = "3.0.0"
+version = "3.1.0"
 edition = "2024"
 homepage = "https://adisveletanlic.blabb.dev/projects/rex/"
 description = "A TUI Plex media player written in Rust"
